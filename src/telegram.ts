@@ -66,6 +66,9 @@ export type Incoming = { message_id: number; from_id?: number; text: string; rec
 
 type Watch = {
   allowFrom?: number[];
+  /** Gate run before queueing; a false answer means the message is refused, not held. */
+  accept?: () => boolean;
+  onRefused?: (message: Incoming) => void;
   onQueued?: (message: Incoming) => void;
   /** Fires for messages no heartbeat collected in time. */
   onExpired?: (messages: Incoming[]) => void;
@@ -215,6 +218,7 @@ export class BotSession {
     if (!watch) return;
     if (watch.allowFrom?.length && !(msg.from && watch.allowFrom.includes(msg.from.id))) return;
     const message: Incoming = { message_id: msg.message_id, from_id: msg.from?.id, text: msg.text!, received_at: now };
+    if (watch.accept && !watch.accept()) return watch.onRefused?.(message);
     this.inbox.set(key, [...(this.inbox.get(key) ?? []), message].slice(-INBOX_LIMIT));
     watch.onQueued?.(message);
   }

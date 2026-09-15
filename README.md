@@ -270,6 +270,9 @@ The server exposes two tools. `send_to_user` starts the conversation:
 | `expect_text` | boolean, optional | Show one *Reply* button; your next message becomes the answer. |
 | `timeout_seconds` | number, default 300 | Deadline for the whole exchange, 5s to 24h. |
 | `bot` | string, optional | Which configured bot to use. |
+| `project_path` | string, required | Absolute path of the project the agent is working in. |
+| `agent` | string, required | The agent's own name, e.g. `claude-code`. |
+| `interval_seconds` | number, default 60 | How often the agent calls `heartbeat`. |
 
 `options` and `expect_text` are mutually exclusive. With neither, the message is a one-way
 notification and the call returns immediately.
@@ -307,6 +310,7 @@ edits a single receipt under your message as it moves:
 | What you see | What it means |
 |---|---|
 | 📥 *Held for the agent's next check-in.* | telex has your message and is holding it. |
+| ⛔ *Not accepted — no agent has checked in for this project yet.* | The server is running but no agent has identified itself. Nothing is holding your message. |
 | 📬 *Delivered to the agent.* | A heartbeat collected it; the agent has it now. |
 | ⌛ *Expired — the agent never picked this up.* | Three intervals passed with no check-in. Dropped. |
 | *nothing at all* | Nothing is running for that project. The message went nowhere. |
@@ -323,6 +327,8 @@ call returns immediately — it never blocks and never waits for you.
 | Parameter | Type | Meaning |
 |---|---|---|
 | `interval_seconds` | number, default 60 | How often the agent intends to check in, 10s to 1h. |
+| `project_path` | string, required | Absolute path of the project. |
+| `agent` | string, required | The agent's own name. |
 | `bot` | string, optional | Which configured bot to listen on. |
 
 ```json
@@ -332,8 +338,31 @@ call returns immediately — it never blocks and never waits for you.
 An empty `messages` array is the normal case — nothing was said, keep working. The interval does
 double duty as a liveness signal: miss three in a row and anything waiting is marked expired and
 dropped, so you learn the agent stopped listening instead of watching a message sit unanswered
-forever. Nothing expires before the first heartbeat, because until then telex has no idea how
-long "too long" is.
+forever.
+
+### Who is calling
+
+Every tool call carries `project_path`, `agent` and `interval_seconds`. That does three things:
+
+- **The expiry clock starts at the first call**, not the first heartbeat. A message you send a
+  second later already has a deadline.
+- **Messages sent before any agent has checked in are refused**, not held. The server starts with
+  your agent, but until the agent actually calls a telex tool nothing owns the bot — telex says so
+  rather than quietly stockpiling messages for an agent that may never ask.
+- **Two projects on one bot get caught.** Each running agent records itself in
+  `~/.local/state/telex/sessions.json` (override with `TELEX_STATE`), so separate telex processes
+  can see each other. When a second one appears on the same bot you get:
+
+  > ⚠️ **Two agents are using this bot at once**
+  > `claude-code` — `/code/acme-api`
+  > `codex` — `/code/other`
+  > Telegram gives each message to only one of them, so answers will go missing.
+
+  That is not a cosmetic warning. Telegram hands each update to exactly one poller, so a shared
+  bot loses roughly half of everything you send. Give each project its own bot.
+
+A record is live while its process exists and it has checked in within three intervals; crashed
+and stale ones are pruned on the next call, so the warning doesn't fire for agents that are gone.
 
 ### Examples
 
@@ -417,6 +446,8 @@ A notification, no answer wanted:
 | Buttons do nothing | The tapping account isn't in `allowFrom`. `telex set <name> --allow <id>`. |
 | You message the bot, nothing replies | Nothing is running for that project — start the agent. That silence is deliberate. |
 | Messages stay "held" | The agent isn't calling `heartbeat`. It will still see them on its next tool call. |
+| Everything is "not accepted" | The agent hasn't called any telex tool yet, so nothing owns the bot. |
+| Warned about two agents | Two projects share one bot. `telex add <name>` and repoint one of them. |
 | Messages expire constantly | The agent's `interval_seconds` is shorter than how often it really checks in. |
 
 Run the server by hand to see startup errors that an agent would swallow:

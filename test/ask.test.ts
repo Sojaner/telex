@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { BotSession, type Update } from "../src/telegram.ts";
-import { ask, chunk, compose, receipt, heartbeat, markExpired } from "../src/ask.ts";
+import { ask, chunk, compose, receipt, refuse, heartbeat, markExpired } from "../src/ask.ts";
 
 /** Fake Bot API: records calls, answers getUpdates with nothing so we can inject updates by hand. */
 function fakeSession() {
@@ -130,10 +130,12 @@ const userSaid = (text: string, from = 42, id = 5): Update => ({
 });
 
 /** Wires a watched chat the way the server does, so the receipts are the real ones. */
-function watched(session: BotSession, allowFrom?: number[]) {
+function watched(session: BotSession, allowFrom?: number[], accept = () => true) {
   const seen: string[] = [];
   session.watch(7, {
     allowFrom,
+    accept,
+    onRefused: (message) => void refuse(session, 7, message),
     onQueued: (message) => {
       seen.push(message.text);
       void receipt(session, 7, message);
@@ -181,7 +183,8 @@ test("a heartbeat delivers what was said and edits the receipt to say so", async
   await tick();
   const receiptId = last("sendMessage")!.result.message_id;
 
-  const delivered = heartbeat(session, 7, 60);
+  session.setInboxTtl(7, 180_000);
+  const delivered = heartbeat(session, 7);
   await tick();
   assert.deepEqual(delivered.map((m) => m.text), ["what is the status?"]);
   const edit = last("editMessageText")!;
@@ -189,7 +192,7 @@ test("a heartbeat delivers what was said and edits the receipt to say so", async
   assert.match(edit.params.text, /Delivered/);
 
   // Nothing is left behind for the next beat.
-  assert.deepEqual(heartbeat(session, 7, 60), []);
+  assert.deepEqual(heartbeat(session, 7), []);
   assert.equal(calls.filter((c) => c.method === "editMessageText").length, 1);
 });
 
@@ -199,21 +202,22 @@ test("a message nobody collects within three beats is expired and dropped", asyn
   watched(session);
 
   const t0 = Date.now();
+  session.setInboxTtl(7, 30_000); // a 10s interval, three beats
   session.dispatch(userSaid("still there?"));
   await tick();
 
   // Two beats late is still within reach...
-  assert.deepEqual(heartbeat(session, 7, 10, 3, t0 + 20_000).map((m) => m.text), ["still there?"]);
+  assert.deepEqual(heartbeat(session, 7, t0 + 20_000).map((m) => m.text), ["still there?"]);
 
   session.dispatch({ ...userSaid("hello?"), update_id: 2 });
   await tick();
   // ...but past three, the user is told rather than left wondering.
-  assert.deepEqual(heartbeat(session, 7, 10, 3, t0 + 31_000), []);
+  assert.deepEqual(heartbeat(session, 7, t0 + 31_000), []);
   await tick();
   assert.match(last("editMessageText")!.params.text, /Expired/);
 });
 
-test("nothing expires before the agent has said how often it checks in", async (t) => {
+test("nothing expires until an agent has declared its interval", async (t) => {
   const { session, calls } = fakeSession();
   t.after(() => session.stop());
   watched(session);
@@ -222,7 +226,7 @@ test("nothing expires before the agent has said how often it checks in", async (
 
   session.sweepInbox(Date.now() + 86_400_000);
   assert.equal(calls.filter((c) => c.method === "editMessageText").length, 0);
-  assert.deepEqual(heartbeat(session, 7, 60).map((m) => m.text), ["early"]);
+  assert.deepEqual(heartbeat(session, 7).map((m) => m.text), ["early"]);
 });
 
 test("an unprompted message from an unlisted user is dropped, not held", async (t) => {
@@ -235,4 +239,21 @@ test("an unprompted message from an unlisted user is dropped, not held", async (
 
   assert.deepEqual(session.take(7), []);
   assert.equal(calls.length, 0);
+});
+
+test("a message sent before any agent checks in is refused, not held", async (t) => {
+  const { session, last } = fakeSession();
+  t.after(() => session.stop());
+  let checkedIn = false;
+  watched(session, undefined, () => checkedIn);
+
+  session.dispatch(userSaid("anyone there?"));
+  await tick();
+  assert.deepEqual(session.take(7), []);
+  assert.match(last("sendMessage")!.params.text, /Not accepted/);
+
+  checkedIn = true;
+  session.dispatch({ ...userSaid("now?"), update_id: 2, message: { message_id: 6, chat: { id: 7 }, from: { id: 42 }, text: "now?" } });
+  await tick();
+  assert.deepEqual(session.take(7).map((m) => m.text), ["now?"]);
 });

@@ -83,6 +83,7 @@ const RECEIPT = {
   held: "📥 <i>Held for the agent's next check-in.</i>",
   delivered: "📬 <i>Delivered to the agent.</i>",
   expired: "⌛ <i>Expired — the agent never picked this up. Send it again if it still matters.</i>",
+  refused: "⛔ <i>Not accepted — no agent has checked in for this project yet.</i>",
 } as const;
 
 export type Delivered = { text: string; received_at: string; waited_seconds: number };
@@ -115,19 +116,21 @@ export const markExpired = (session: BotSession, chatId: number | string, messag
   for (const message of messages) void updateReceipt(session, chatId, message, RECEIPT.expired);
 };
 
+/** Tell the user their message went nowhere, rather than holding it for an agent that may never come. */
+export function refuse(session: BotSession, chatId: number | string, message: Incoming) {
+  return session.api("sendMessage", {
+    chat_id: chatId,
+    text: RECEIPT.refused,
+    parse_mode: "HTML",
+    reply_parameters: { message_id: message.message_id, allow_sending_without_reply: true },
+  }).catch(() => {});
+}
+
 /**
- * One heartbeat: collect whatever the user said while the agent was busy, mark it delivered, and
- * tell the session how long the next batch may wait. Returns immediately — the agent's own interval
- * is the clock, and its silence is what eventually expires a message.
+ * One heartbeat: drop whatever the agent left too long, then hand over the rest. Returns
+ * immediately — the agent's own interval is the clock, and its silence is what expires a message.
  */
-export function heartbeat(
-  session: BotSession,
-  chatId: number | string,
-  intervalSeconds: number,
-  missedBeats = 3,
-  now = Date.now(),
-): Delivered[] {
-  session.setInboxTtl(chatId, intervalSeconds * missedBeats * 1000);
+export function heartbeat(session: BotSession, chatId: number | string, now = Date.now()): Delivered[] {
   session.sweepInbox(now);
   return deliver(session, chatId, now);
 }
