@@ -21,7 +21,8 @@ Options for add/set:
 
 Config lives at ${configPath()} (override with TELEX_CONFIG).`;
 
-const serverEntry = fileURLToPath(new URL("index.ts", import.meta.url));
+// Resolves to src/index.ts in a checkout and dist/index.js once built.
+const serverEntry = fileURLToPath(new URL(import.meta.url.endsWith(".ts") ? "index.ts" : "index.js", import.meta.url));
 
 /** Group chat ids are negative, and parseArgs reads a leading dash as another flag. */
 const { values: flags, positionals } = parseArgsFriendly({

@@ -6,17 +6,33 @@ offer buttons, collect a typed reply, and give up gracefully when you are away.
 Not a public service: it runs over stdio next to your agent and only ever messages the chat
 ids in your config.
 
+## Install
+
+```sh
+npm i -g github:Sojaner/telex
+```
+
+Requires Node 22.6+. `dist/` is committed so the install needs no build step — run
+`npm run build` before committing changes to `src/`.
+
 ## Setup
 
 ```sh
-npm install
-npm run setup
+telex add
 ```
 
 Create a bot with [@BotFather](https://t.me/BotFather) (`/newbot`), paste the token when asked,
-then send the bot a message — setup reads the chat id and your user id off that message, writes
-the config, sends a test message and prints the line to register the server with your agent.
-Run it again to add another bot.
+then send the bot a message — telex reads the chat id and your user id off that message, writes
+the config and sends a test message. Run it again for each further bot.
+
+```
+telex add [name]                add a bot, guided; or --token ... --chat-id ...
+telex list                      configured bots, tokens masked
+telex set <name> [options]      --token, --chat-id, --allow, --default
+telex remove <name>
+telex config [name]             print the MCP registration for a project
+telex serve                     run the MCP server (what the agent launches)
+```
 
 To write the config by hand instead, copy `config.example.json` to `~/.config/telex/config.json`.
 `chatId` is `message.chat.id` from `https://api.telegram.org/bot<token>/getUpdates`.
@@ -27,17 +43,19 @@ same token fight over updates.
 
 Config is read from `$TELEX_CONFIG`, else `~/.config/telex/config.json`.
 
-Register with your agent:
+## One bot per project
 
-```json
-{
-  "mcpServers": {
-    "telex": { "command": "node", "args": ["/path/to/telex/src/index.ts"] }
-  }
-}
+`telex config <bot>` prints the registration that pins a project to a bot:
+
+```sh
+cd ~/code/some-project
+telex config some-project
+# claude mcp add --scope project telex --env TELEX_BOT=some-project -- telex serve
 ```
 
-Requires Node 22.6+ (TypeScript runs directly, no build step).
+`TELEX_BOT` is that project's default, so its agent messages its own bot without being told.
+The agent can still pass `bot` per call to reach another one, and without `TELEX_BOT` the
+global `defaultBot` applies.
 
 ## The tool
 

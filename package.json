@@ -4,11 +4,12 @@
   "description": "MCP server that lets local AI agents ask users questions through Telegram bots",
   "type": "module",
   "bin": {
-    "telex": "src/cli.ts"
+    "telex": "dist/cli.js"
   },
   "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "prepare": "npm run build",
     "telex": "node src/cli.ts",
-    "setup": "node src/cli.ts add",
     "typecheck": "tsc --noEmit",
     "test": "node --test test/*.test.ts"
   },
@@ -25,7 +26,7 @@
   },
   "license": "MIT",
   "files": [
-    "src",
+    "dist",
     "config.example.json",
     "README.md"
   ],
