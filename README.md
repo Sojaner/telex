@@ -10,12 +10,16 @@ ids in your config.
 
 ```sh
 npm install
-cp config.example.json ~/.config/telex/config.json   # then fill in tokens and chat ids
+npm run setup
 ```
 
-Each bot needs a token from [@BotFather](https://t.me/BotFather) and the `chatId` of the chat
-it should write to (message the bot, then open
-`https://api.telegram.org/bot<token>/getUpdates` and read `message.chat.id`).
+Create a bot with [@BotFather](https://t.me/BotFather) (`/newbot`), paste the token when asked,
+then send the bot a message — setup reads the chat id and your user id off that message, writes
+the config, sends a test message and prints the line to register the server with your agent.
+Run it again to add another bot.
+
+To write the config by hand instead, copy `config.example.json` to `~/.config/telex/config.json`.
+`chatId` is `message.chat.id` from `https://api.telegram.org/bot<token>/getUpdates`.
 
 Optional `allowFrom` is a list of Telegram user ids allowed to answer. In a group everyone can
 see and tap your buttons, so set it there. Give telex its own bot — two processes polling the
