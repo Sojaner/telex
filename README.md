@@ -9,11 +9,14 @@ ids in your config.
 ## Install
 
 ```sh
-npm i -g github:Sojaner/telex
+npm i -g --install-links github:Sojaner/telex
 ```
 
-Requires Node 22.6+. `dist/` is committed so the install needs no build step — run
-`npm run build` before committing changes to `src/`.
+`--install-links` is needed because npm otherwise symlinks the global install into its own
+git cache, which it then deletes. Requires Node 22.6+.
+
+`dist/` is committed so the install needs no build step — run `npm run build` before
+committing changes to `src/`.
 
 ## Setup
 
