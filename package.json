@@ -4,13 +4,13 @@
   "description": "MCP server that lets local AI agents ask users questions through Telegram bots",
   "type": "module",
   "bin": {
-    "telex": "src/index.ts"
+    "telex": "src/cli.ts"
   },
   "scripts": {
-    "start": "node src/index.ts",
+    "telex": "node src/cli.ts",
+    "setup": "node src/cli.ts add",
     "typecheck": "tsc --noEmit",
-    "test": "node --test test/*.test.ts",
-    "setup": "node src/setup.ts"
+    "test": "node --test test/*.test.ts"
   },
   "engines": {
     "node": ">=22.6"
@@ -23,5 +23,14 @@
     "@types/node": "^24.0.0",
     "typescript": "^5.9.0"
   },
-  "license": "MIT"
+  "license": "MIT",
+  "files": [
+    "src",
+    "config.example.json",
+    "README.md"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Sojaner/telex.git"
+  }
 }

@@ -8,6 +8,8 @@ import { ask } from "./ask.ts";
 
 const config = loadConfig();
 const botNames = Object.keys(config.bots);
+// A project pins its bot with TELEX_BOT in the MCP registration; the agent can still override per call.
+const defaultBot = process.env.TELEX_BOT || config.defaultBot!;
 
 const server = new McpServer({ name: "telex", version: "0.1.0" });
 
@@ -28,7 +30,7 @@ server.registerTool(
       `If the user does not answer within 'timeout_seconds' the result is {"status":"timeout"}, the buttons`,
       "are removed and the message is marked stale. That means the user is unavailable — decide for yourself",
       "whether to continue, retry or stop.",
-      `Bots: ${botNames.join(", ")} (default: ${config.defaultBot}).`,
+      `Bots: ${botNames.join(", ")} (default for this project: ${defaultBot}).`,
     ].join("\n"),
     inputSchema: {
       project: z.string().min(1).describe("Project or task name, shown as the message heading."),
@@ -40,7 +42,7 @@ server.registerTool(
       timeout_seconds: z.number().int().min(5).max(86400).default(300)
         .describe("How long to wait for an answer before giving up."),
       bot: z.enum(botNames as [string, ...string[]]).optional()
-        .describe(`Which configured bot to send through. Defaults to "${config.defaultBot}".`),
+        .describe(`Which configured bot to send through. Defaults to "${defaultBot}".`),
     },
   },
   async ({ project, message, options, expect_text, timeout_seconds, bot }) => {
