@@ -6,6 +6,11 @@ on:
   pull_request:
   workflow_dispatch:
 
+# One release at a time, so two runs can never claim the same version tag.
+concurrency:
+  group: release
+  cancel-in-progress: false
+
 jobs:
   test:
     runs-on: ubuntu-latest
@@ -48,6 +53,8 @@ jobs:
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          # Pick up any release another run just pushed, so the bump lands on top of it.
+          git pull --rebase origin main
           version=$(npm version patch -m "chore: release v%s [skip ci]")
           echo "version=$version" >> "$GITHUB_OUTPUT"
           git push --follow-tags origin main
