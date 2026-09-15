@@ -57,8 +57,9 @@ jobs:
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           # Pick up any release another run just pushed, so the bump lands on top of it.
           git pull --rebase origin main
-          version=$(pnpm version patch --message "chore: release v%s [skip ci]")
-          echo "version=$version" >> "$GITHUB_OUTPUT"
+          pnpm version patch --message "chore: release v%s [skip ci]"
+          # pnpm version prints prose, not the tag, so read the result back.
+          echo "version=v$(node -p "require('./package.json').version")" >> "$GITHUB_OUTPUT"
           git push --follow-tags origin main
 
       - name: Pack the published tarball
