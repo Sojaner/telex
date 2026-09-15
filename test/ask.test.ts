@@ -1,17 +1,17 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { BotSession, type Update } from "../src/telegram.ts";
-import { ask, chunk, compose } from "../src/ask.ts";
+import { ask, chunk, compose, receipt, heartbeat, markExpired } from "../src/ask.ts";
 
 /** Fake Bot API: records calls, answers getUpdates with nothing so we can inject updates by hand. */
 function fakeSession() {
-  const calls: { method: string; params: any }[] = [];
+  const calls: { method: string; params: any; result: any }[] = [];
   let messageId = 100;
   const session = new BotSession(async (method, params) => {
     if (method === "getUpdates") return await new Promise((r) => setTimeout(() => r([]), 10));
-    calls.push({ method, params });
-    if (method === "sendMessage") return { message_id: ++messageId };
-    return true;
+    const result = method === "sendMessage" ? { message_id: ++messageId } : true;
+    calls.push({ method, params, result });
+    return result;
   }, 0);
   return { session, calls, last: (m: string) => [...calls].reverse().find((c) => c.method === m) };
 }
@@ -122,4 +122,117 @@ test("oversized messages split on line breaks and keep the keyboard on the last 
   assert.ok(sends.length > 1);
   for (const s of sends) assert.ok(s.params.text.length <= 4000, `chunk too long: ${s.params.text.length}`);
   assert.deepEqual(chunk("aaa\nbbb", 5), ["aaa", "bbb"]);
+});
+
+const userSaid = (text: string, from = 42, id = 5): Update => ({
+  update_id: 1,
+  message: { message_id: id, chat: { id: 7 }, from: { id: from }, text },
+});
+
+/** Wires a watched chat the way the server does, so the receipts are the real ones. */
+function watched(session: BotSession, allowFrom?: number[]) {
+  const seen: string[] = [];
+  session.watch(7, {
+    allowFrom,
+    onQueued: (message) => {
+      seen.push(message.text);
+      void receipt(session, 7, message);
+    },
+    onExpired: (messages) => markExpired(session, 7, messages),
+  });
+  return seen;
+}
+
+test("an unprompted message is held for the agent and the user is told nothing is asking", async (t) => {
+  const { session, last } = fakeSession();
+  t.after(() => session.stop());
+  const seen = watched(session);
+
+  session.dispatch(userSaid("deploy it"));
+  await tick();
+
+  assert.deepEqual(seen, ["deploy it"]);
+  assert.match(last("sendMessage")!.params.text, /held/i);
+  assert.equal(last("sendMessage")!.params.reply_parameters.message_id, 5);
+  assert.deepEqual(session.take(7).map((m) => m.text), ["deploy it"]);
+  assert.deepEqual(session.take(7), []);
+});
+
+test("a held message does not answer the next question", async (t) => {
+  const { session, calls } = fakeSession();
+  t.after(() => session.stop());
+  watched(session);
+  session.dispatch(userSaid("deploy it"));
+  await tick();
+
+  const pending = ask(session, 7, { project: "P", message: "Name?", expectText: true, timeoutSeconds: 0.3 as number });
+  await tick();
+  const question = calls.find((c) => c.params.reply_markup?.inline_keyboard)!;
+  session.dispatch(callbackUpdate(question.params.reply_markup.inline_keyboard[0][0].callback_data));
+  assert.equal((await pending).status, "timeout");
+});
+
+test("a heartbeat delivers what was said and edits the receipt to say so", async (t) => {
+  const { session, last, calls } = fakeSession();
+  t.after(() => session.stop());
+  watched(session);
+
+  session.dispatch(userSaid("what is the status?"));
+  await tick();
+  const receiptId = last("sendMessage")!.result.message_id;
+
+  const delivered = heartbeat(session, 7, 60);
+  await tick();
+  assert.deepEqual(delivered.map((m) => m.text), ["what is the status?"]);
+  const edit = last("editMessageText")!;
+  assert.equal(edit.params.message_id, receiptId);
+  assert.match(edit.params.text, /Delivered/);
+
+  // Nothing is left behind for the next beat.
+  assert.deepEqual(heartbeat(session, 7, 60), []);
+  assert.equal(calls.filter((c) => c.method === "editMessageText").length, 1);
+});
+
+test("a message nobody collects within three beats is expired and dropped", async (t) => {
+  const { session, last } = fakeSession();
+  t.after(() => session.stop());
+  watched(session);
+
+  const t0 = Date.now();
+  session.dispatch(userSaid("still there?"));
+  await tick();
+
+  // Two beats late is still within reach...
+  assert.deepEqual(heartbeat(session, 7, 10, 3, t0 + 20_000).map((m) => m.text), ["still there?"]);
+
+  session.dispatch({ ...userSaid("hello?"), update_id: 2 });
+  await tick();
+  // ...but past three, the user is told rather than left wondering.
+  assert.deepEqual(heartbeat(session, 7, 10, 3, t0 + 31_000), []);
+  await tick();
+  assert.match(last("editMessageText")!.params.text, /Expired/);
+});
+
+test("nothing expires before the agent has said how often it checks in", async (t) => {
+  const { session, calls } = fakeSession();
+  t.after(() => session.stop());
+  watched(session);
+  session.dispatch(userSaid("early"));
+  await tick();
+
+  session.sweepInbox(Date.now() + 86_400_000);
+  assert.equal(calls.filter((c) => c.method === "editMessageText").length, 0);
+  assert.deepEqual(heartbeat(session, 7, 60).map((m) => m.text), ["early"]);
+});
+
+test("an unprompted message from an unlisted user is dropped, not held", async (t) => {
+  const { session, calls } = fakeSession();
+  t.after(() => session.stop());
+  watched(session, [42]);
+
+  session.dispatch(userSaid("let me in", 99));
+  await tick();
+
+  assert.deepEqual(session.take(7), []);
+  assert.equal(calls.length, 0);
 });

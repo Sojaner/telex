@@ -1,0 +1,14 @@
+{
+  "mcpServers": {
+    "telex": {
+      "type": "stdio",
+      "command": "telex",
+      "args": [
+        "serve"
+      ],
+      "env": {
+        "TELEX_BOT": "telex"
+      }
+    }
+  }
+}

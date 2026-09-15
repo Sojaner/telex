@@ -1,4 +1,4 @@
-import { type BotSession, type CallbackCtx, TelegramError, escapeHtml, MAX_MESSAGE_LEN } from "./telegram.ts";
+import { type BotSession, type CallbackCtx, type Incoming, TelegramError, escapeHtml, MAX_MESSAGE_LEN } from "./telegram.ts";
 
 export type AskInput = {
   project: string;
@@ -76,6 +76,72 @@ export async function ask(session: BotSession, chatId: number | string, input: A
   }
   await settle(session, chatId, messageId, tail, `✅ <b>${escapeHtml(answer.value)}</b>`);
   return { status: "answered", response: answer.value, kind: answer.kind, message_id: messageId };
+}
+
+/** What the user sees under their own message as it moves through the queue. */
+const RECEIPT = {
+  held: "📥 <i>Held for the agent's next check-in.</i>",
+  delivered: "📬 <i>Delivered to the agent.</i>",
+  expired: "⌛ <i>Expired — the agent never picked this up. Send it again if it still matters.</i>",
+} as const;
+
+export type Delivered = { text: string; received_at: string; waited_seconds: number };
+
+/**
+ * Telegram gives bots no delivery receipt, so telex sends its own and edits it in place. A project
+ * that is not running never posts one at all, which is how the user can tell nobody is listening.
+ */
+export async function receipt(session: BotSession, chatId: number | string, message: Incoming) {
+  const sent = await session.api("sendMessage", {
+    chat_id: chatId,
+    text: RECEIPT.held,
+    parse_mode: "HTML",
+    reply_parameters: { message_id: message.message_id, allow_sending_without_reply: true },
+  }).catch(() => undefined);
+  if (sent) message.receipt_id = sent.message_id;
+}
+
+function updateReceipt(session: BotSession, chatId: number | string, message: Incoming, text: string) {
+  if (message.receipt_id === undefined) return;
+  return session.api("editMessageText", {
+    chat_id: chatId,
+    message_id: message.receipt_id,
+    text,
+    parse_mode: "HTML",
+  }).catch(() => {}); // an unchanged or deleted receipt is not worth failing a heartbeat over
+}
+
+export const markExpired = (session: BotSession, chatId: number | string, messages: Incoming[]) => {
+  for (const message of messages) void updateReceipt(session, chatId, message, RECEIPT.expired);
+};
+
+/**
+ * One heartbeat: collect whatever the user said while the agent was busy, mark it delivered, and
+ * tell the session how long the next batch may wait. Returns immediately — the agent's own interval
+ * is the clock, and its silence is what eventually expires a message.
+ */
+export function heartbeat(
+  session: BotSession,
+  chatId: number | string,
+  intervalSeconds: number,
+  missedBeats = 3,
+  now = Date.now(),
+): Delivered[] {
+  session.setInboxTtl(chatId, intervalSeconds * missedBeats * 1000);
+  session.sweepInbox(now);
+  return deliver(session, chatId, now);
+}
+
+/** Hand the queue to the agent and say so in the chat. */
+export function deliver(session: BotSession, chatId: number | string, now = Date.now()): Delivered[] {
+  return session.take(chatId).map((message) => {
+    void updateReceipt(session, chatId, message, RECEIPT.delivered);
+    return {
+      text: message.text,
+      received_at: new Date(message.received_at).toISOString(),
+      waited_seconds: Math.round((now - message.received_at) / 1000),
+    };
+  });
 }
 
 /** An inline keyboard is clickable by anyone who can see it, so authorise the tap, not the send. */

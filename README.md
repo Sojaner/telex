@@ -168,26 +168,36 @@ keeping their own copy of your tokens.
 telex config
 ```
 
-prints the registration to paste. The server command is `telex serve`.
+prints the registration for every agent that can take a project-level MCP config. The server
+command is always `telex serve`.
 
-**Claude Code**
+Agents that install it themselves — run in the project root:
 
 ```sh
-claude mcp add --scope user telex -- telex serve
+claude mcp add --scope project telex -- telex serve      # Claude Code
+gemini mcp add --scope project telex telex serve         # Gemini CLI
+qwen mcp add --scope project telex telex serve           # Qwen Code
 ```
 
-**Any MCP client** (`.mcp.json`, `claude_desktop_config.json`, Cursor, Continue, …):
+Agents you configure by committing a file — same server, different shape per agent:
 
-```json
-{
-  "mcpServers": {
-    "telex": {
-      "command": "telex",
-      "args": ["serve"]
-    }
-  }
-}
-```
+| Agent | File | Shape |
+|---|---|---|
+| Claude Code | `.mcp.json` | `{"mcpServers": {"telex": {"command": "telex", "args": ["serve"]}}}` |
+| Cursor | `.cursor/mcp.json` | same as above |
+| Roo Code | `.roo/mcp.json` | same as above |
+| VS Code | `.vscode/mcp.json` | `{"servers": {"telex": {"type": "stdio", "command": "telex", "args": ["serve"]}}}` |
+| Zed | `.zed/settings.json` | `{"context_servers": {"telex": {"source": "custom", "command": "telex", "args": ["serve"]}}}` |
+| Amp | `.amp/settings.json` | `{"amp.mcpServers": {"telex": {"command": "telex", "args": ["serve"]}}}` |
+| opencode | `opencode.json` | `{"mcp": {"telex": {"type": "local", "command": ["telex", "serve"]}}}` |
+| Crush | `.crush.json` | `{"mcp": {"telex": {"type": "stdio", "command": "telex", "args": ["serve"]}}}` |
+| Codex CLI | `.codex/config.toml` | `[mcp_servers.telex]` / `command = "telex"` / `args = ["serve"]` |
+
+Codex only reads `.codex/config.toml` for projects you have marked trusted. Anything else that
+speaks MCP takes the `mcpServers` shape — `claude_desktop_config.json`, Continue, and the rest.
+
+`telex config --json` prints just that `mcpServers` object. For one bot everywhere instead of one
+per project, install at user scope: `claude mcp add --scope user telex -- telex serve`.
 
 If `telex` is not on the agent's `PATH` — GUI apps often have a shorter `PATH` than your shell —
 use the absolute path, or point Node at the installed entry point:
@@ -216,7 +226,7 @@ telex add acme-api                       # its own bot, its own chat
 telex config acme-api
 ```
 
-which prints:
+which prints the same list as above, with `TELEX_BOT=acme-api` threaded into every entry:
 
 ```sh
 claude mcp add --scope project telex --env TELEX_BOT=acme-api -- telex serve
@@ -248,9 +258,9 @@ deliberately (`bot: "oncall"` for something urgent, say).
 
 ---
 
-## The tool
+## The tools
 
-The server exposes one tool, `send_to_user`:
+The server exposes two tools. `send_to_user` starts the conversation:
 
 | Parameter | Type | Meaning |
 |---|---|---|
@@ -280,6 +290,50 @@ the call.
 On `timeout` the buttons are stripped and the message is marked stale, so a late tap can't answer
 a question nobody is listening to any more. What happens next — retry, continue without you,
 stop — is entirely the agent's call. telex has no opinion.
+
+If you messaged the bot while the agent wasn't asking anything, the result carries those messages
+too, delivered exactly as a heartbeat would:
+
+```json
+{"status": "sent", "message_id": 101, "pending": [{"text": "hold off on the deploy", "received_at": "2026-09-15T18:22:04.000Z", "waited_seconds": 37}]}
+```
+
+### Messages you send first
+
+You can talk to the bot without being asked. An MCP server cannot wake a sleeping agent — agents
+only act when they call a tool — so telex holds what you said until the agent checks in, and
+edits a single receipt under your message as it moves:
+
+| What you see | What it means |
+|---|---|
+| 📥 *Held for the agent's next check-in.* | telex has your message and is holding it. |
+| 📬 *Delivered to the agent.* | A heartbeat collected it; the agent has it now. |
+| ⌛ *Expired — the agent never picked this up.* | Three intervals passed with no check-in. Dropped. |
+| *nothing at all* | Nothing is running for that project. The message went nowhere. |
+
+Silence is the signal: telex only polls while its process is alive, so a message with no receipt
+at all means no agent is there to receive it. Held messages are capped at 50 per chat, oldest
+dropped.
+
+### `heartbeat`
+
+The agent's side of that. It calls this on a fixed interval for as long as it is working, and the
+call returns immediately — it never blocks and never waits for you.
+
+| Parameter | Type | Meaning |
+|---|---|---|
+| `interval_seconds` | number, default 60 | How often the agent intends to check in, 10s to 1h. |
+| `bot` | string, optional | Which configured bot to listen on. |
+
+```json
+{"messages": [{"text": "ship it", "received_at": "2026-09-15T18:22:04.000Z", "waited_seconds": 12}], "interval_seconds": 60}
+```
+
+An empty `messages` array is the normal case — nothing was said, keep working. The interval does
+double duty as a liveness signal: miss three in a row and anything waiting is marked expired and
+dropped, so you learn the agent stopped listening instead of watching a message sit unanswered
+forever. Nothing expires before the first heartbeat, because until then telex has no idea how
+long "too long" is.
 
 ### Examples
 
@@ -327,8 +381,13 @@ A notification, no answer wanted:
 - **Slash commands are ignored** as text answers, so `/start` and friends still work.
 - **Rate limits** are honoured: a `429` is retried after the `retry_after` Telegram asks for.
 - **Tokens are redacted** from error messages; they appear in the API URL that failed.
-- **Polling is on demand.** telex long-polls only while an answer is pending, so an idle server
-  makes no network calls at all.
+- **Polling runs while the process does.** Once a project's bot is watched telex long-polls for
+  the life of the server, because being reachable is what makes "delivered" mean anything. Kill
+  the agent and the bot goes quiet.
+- **Unprompted messages are held, not answered with.** A message you send while nothing is asking
+  is queued for the agent instead of being read as the answer to whatever gets asked next.
+- **`allowFrom` covers inbound too.** Someone else in the group messaging the bot is dropped, not
+  queued.
 - **One poller per token.** Two processes polling the same bot fight over updates; give telex its
   own bot. It says so explicitly if it detects a conflict.
 
@@ -356,6 +415,9 @@ A notification, no answer wanted:
 | `getUpdates conflict` | Another process is polling the same token. Give telex its own bot. |
 | Agent can't start the server | `telex` isn't on its `PATH`; use the absolute `node …/dist/index.js` form. |
 | Buttons do nothing | The tapping account isn't in `allowFrom`. `telex set <name> --allow <id>`. |
+| You message the bot, nothing replies | Nothing is running for that project — start the agent. That silence is deliberate. |
+| Messages stay "held" | The agent isn't calling `heartbeat`. It will still see them on its next tool call. |
+| Messages expire constantly | The agent's `interval_seconds` is shorter than how often it really checks in. |
 
 Run the server by hand to see startup errors that an agent would swallow:
 

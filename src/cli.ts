@@ -11,7 +11,7 @@ const USAGE = `telex — send messages from local AI agents to Telegram
   telex list                          show configured bots
   telex set <name> [options]          change a bot
   telex remove <name>                 delete a bot
-  telex config [name]                 print the MCP registration for a project
+  telex config [name]                 print the MCP registration for every agent
 
 Options for add/set:
   --token <token>       bot token from @BotFather
@@ -118,16 +118,21 @@ async function run(command: string, name?: string) {
     case "config": {
       const config = readConfig();
       if (name) required(config.bots, name);
-      const entry = {
-        command: "telex",
-        args: ["serve"],
-        ...(name ? { env: { TELEX_BOT: name } } : {}),
-      };
+      const env = name ? { TELEX_BOT: name } : undefined;
+      const entry = { command: "telex", args: ["serve"], ...(env ? { env } : {}) };
       if (flags.json) return console.log(JSON.stringify({ mcpServers: { telex: entry } }, null, 2));
-      console.log(`Register telex with this project's agent:\n`);
-      console.log(`  claude mcp add --scope project telex${name ? ` --env TELEX_BOT=${name}` : ""} -- telex serve\n`);
-      console.log(`...or add to .mcp.json / any MCP client config:\n`);
-      console.log(`${JSON.stringify({ mcpServers: { telex: entry } }, null, 2)}\n`);
+
+      console.log(`Agents that install it for you — run in the project root:\n`);
+      for (const [agent, line] of cliInstallers(name)) console.log(`  ${agent.padEnd(15)}${line}`);
+
+      console.log(`\nAgents you configure by committing a file:\n`);
+      for (const [agent, file, snippet] of fileConfigs(entry, env)) {
+        console.log(`  ${agent.padEnd(15)}${file}`);
+        for (const line of snippet.split("\n")) console.log(`  ${" ".repeat(15)}${line}`);
+        console.log();
+      }
+
+      console.log(`Codex reads .codex/config.toml only for projects you have trusted.`);
       if (name) console.log(`Messages from this project default to "${name}"; the agent can still pass another bot.`);
       else console.log(`Pass a bot name to pin this project to one: telex config <name>`);
       console.log(`\nIf "telex" is not on PATH, use: "command": "node", "args": ["${serverEntry}"]`);
@@ -137,6 +142,38 @@ async function run(command: string, name?: string) {
     default:
       throw new Error(`unknown command "${command}"\n\n${USAGE}`);
   }
+}
+
+type Entry = { command: string; args: string[]; env?: Record<string, string> };
+
+/** Agents whose CLI can write a project-scoped MCP entry itself. */
+function cliInstallers(name?: string): [string, string][] {
+  const claudeEnv = name ? ` --env TELEX_BOT=${name}` : "";
+  const geminiEnv = name ? ` -e TELEX_BOT=${name}` : "";
+  return [
+    ["Claude Code", `claude mcp add --scope project telex${claudeEnv} -- telex serve`],
+    ["Gemini CLI", `gemini mcp add --scope project${geminiEnv} telex telex serve`],
+    ["Qwen Code", `qwen mcp add --scope project${geminiEnv} telex telex serve`],
+  ];
+}
+
+/** Same server, one line per agent: where the file lives and the shape that agent expects. */
+function fileConfigs(entry: Entry, env?: Record<string, string>): [string, string, string][] {
+  const { command, args } = entry;
+  const json = (value: unknown) => JSON.stringify(value);
+  const standard = json({ mcpServers: { telex: entry } });
+  const toml = [`[mcp_servers.telex]`, `command = "${command}"`, `args = ["serve"]`, ...(env ? [`env = { TELEX_BOT = "${env.TELEX_BOT}" }`] : [])].join("\n");
+  return [
+    ["Claude Code", ".mcp.json", standard],
+    ["Cursor", ".cursor/mcp.json", standard],
+    ["Roo Code", ".roo/mcp.json", standard],
+    ["VS Code", ".vscode/mcp.json", json({ servers: { telex: { type: "stdio", ...entry } } })],
+    ["Zed", ".zed/settings.json", json({ context_servers: { telex: { source: "custom", ...entry } } })],
+    ["Amp", ".amp/settings.json", json({ "amp.mcpServers": { telex: entry } })],
+    ["opencode", "opencode.json", json({ mcp: { telex: { type: "local", command: [command, ...args], ...(env ? { environment: env } : {}) } } })],
+    ["Crush", ".crush.json", json({ mcp: { telex: { type: "stdio", ...entry } } })],
+    ["Codex CLI", ".codex/config.toml", toml],
+  ];
 }
 
 function required(bots: Record<string, Bot>, name?: string): Bot {

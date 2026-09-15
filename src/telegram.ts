@@ -61,9 +61,22 @@ export type CallbackCtx = { callbackId: string; fromId?: number; chatId?: number
 type CallbackWaiter = (payload: string, ctx: CallbackCtx) => void;
 type TextWaiter = (text: string, fromId?: number) => void;
 
+/** A message the user sent without being asked for one. `receipt_id` is telex's reply to it. */
+export type Incoming = { message_id: number; from_id?: number; text: string; received_at: number; receipt_id?: number };
+
+type Watch = {
+  allowFrom?: number[];
+  onQueued?: (message: Incoming) => void;
+  /** Fires for messages no heartbeat collected in time. */
+  onExpired?: (messages: Incoming[]) => void;
+};
+
+/** An agent that never checks in must not grow the inbox without bound; oldest go first. */
+const INBOX_LIMIT = 50;
+
 /**
- * One session per bot token. Polling runs only while something is waiting, so an
- * idle server makes no network calls and never fights another poller for updates.
+ * One session per bot token. Polling runs while a question is open and, once a chat is watched,
+ * for the rest of the process's life — a project that is not running simply never answers.
  */
 export class BotSession {
   readonly api: Fetcher;
@@ -73,6 +86,10 @@ export class BotSession {
   private looping = false;
   private callbackWaiters = new Map<string, CallbackWaiter>();
   private textWaiters = new Map<string, TextWaiter>();
+  private watched = new Map<string, Watch>();
+  private inbox = new Map<string, Incoming[]>();
+  private ttl = new Map<string, number>();
+  private listening = false;
 
   constructor(api: Fetcher, pollTimeout = 30) {
     this.api = api;
@@ -89,6 +106,39 @@ export class BotSession {
     this.textWaiters.set(String(chatId), fn);
     this.ensureLoop();
     return () => this.textWaiters.delete(String(chatId));
+  }
+
+  /**
+   * Take an interest in a chat and keep polling for the life of the process. Being alive is what
+   * makes a project reachable: if nothing polls, nothing acknowledges, and nothing was delivered.
+   */
+  watch(chatId: number | string, options: Watch = {}) {
+    this.watched.set(String(chatId), options);
+    this.listening = true;
+    this.ensureLoop();
+  }
+
+  /** Stop the permanent poll. The loop still runs out whatever question is currently open. */
+  stop() {
+    this.listening = false;
+    this.watched.clear();
+    this.ttl.clear();
+  }
+
+  /**
+   * How long a message may sit unclaimed. Set from the agent's heartbeat interval, so until it
+   * checks in for the first time telex has no idea how long "too long" is and nothing expires.
+   */
+  setInboxTtl(chatId: number | string, ms: number) {
+    this.ttl.set(String(chatId), ms);
+  }
+
+  /** Hand over everything held for this chat. */
+  take(chatId: number | string): Incoming[] {
+    const key = String(chatId);
+    const queued = this.inbox.get(key) ?? [];
+    this.inbox.delete(key);
+    return queued;
   }
 
   private get idle() {
@@ -114,7 +164,7 @@ export class BotSession {
 
   private async loop() {
     await this.skipBacklog();
-    while (!this.idle) {
+    while (this.listening || !this.idle) {
       let updates: Update[];
       try {
         updates = await this.api("getUpdates", {
@@ -133,6 +183,7 @@ export class BotSession {
         continue;
       }
       for (const u of updates) this.dispatch(u);
+      this.sweepInbox();
     }
   }
 
@@ -151,8 +202,35 @@ export class BotSession {
     }
     const msg = u.message;
     // Slash commands stay available to whatever else the user runs against this bot.
-    if (msg?.text !== undefined && !msg.text.startsWith("/")) {
-      this.textWaiters.get(String(msg.chat.id))?.(msg.text, msg.from?.id);
+    if (msg?.text === undefined || msg.text.startsWith("/")) return;
+    const key = String(msg.chat.id);
+    const answering = this.textWaiters.get(key);
+    if (answering) return answering(msg.text, msg.from?.id);
+    this.queue(key, msg);
+  }
+
+  /** Nobody asked for this one, so hold it rather than let it answer whatever gets asked next. */
+  private queue(key: string, msg: NonNullable<Update["message"]>, now = Date.now()) {
+    const watch = this.watched.get(key);
+    if (!watch) return;
+    if (watch.allowFrom?.length && !(msg.from && watch.allowFrom.includes(msg.from.id))) return;
+    const message: Incoming = { message_id: msg.message_id, from_id: msg.from?.id, text: msg.text!, received_at: now };
+    this.inbox.set(key, [...(this.inbox.get(key) ?? []), message].slice(-INBOX_LIMIT));
+    watch.onQueued?.(message);
+  }
+
+  /**
+   * Drop whatever outlived the TTL. Runs on every poll, so a message expires even when the agent
+   * has stopped checking in entirely — which is exactly when the user most needs telling.
+   */
+  sweepInbox(now = Date.now()) {
+    for (const [key, held] of this.inbox) {
+      const ttl = this.ttl.get(key);
+      if (ttl === undefined) continue;
+      const expired = held.filter((m) => now - m.received_at > ttl);
+      if (!expired.length) continue;
+      this.inbox.set(key, held.filter((m) => now - m.received_at <= ttl));
+      this.watched.get(key)?.onExpired?.(expired);
     }
   }
 }
