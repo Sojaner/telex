@@ -41,9 +41,9 @@ Or run it from a checkout:
 
 ```sh
 git clone https://github.com/Sojaner/telex && cd telex
-npm install
-node src/cli.ts --help      # runs the TypeScript directly, no build
-npm run build && npm i -g . # or link this checkout as the global telex
+corepack enable && pnpm install
+node src/cli.ts --help          # runs the TypeScript directly, no build
+pnpm run build && npm i -g .    # or link this checkout as the global telex
 ```
 
 Upgrade with the same install command; uninstall with `npm rm -g telex`.
@@ -367,16 +367,21 @@ telex serve < /dev/null
 
 ## Development
 
+This repo uses **pnpm** — `package-lock.json` is not accepted, and `npm install` in a checkout
+stops with a message telling you so. The published tarball is unaffected: install it with npm,
+pnpm or anything else.
+
 ```sh
-npm install
-npm test          # node:test, no network
-npm run typecheck
-npm run build     # tsc → dist/, normally done by CI
+corepack enable   # uses the pnpm version pinned in packageManager
+pnpm install
+pnpm test         # node:test, no network
+pnpm run typecheck
+pnpm run build    # tsc → dist/, normally done by CI
 node src/cli.ts   # run from source; Node strips the types
 ```
 
-`dist/` is not committed. CI runs the tests on Node 22 and 24, then bumps the version, tags it,
-and publishes a release with the built tarball attached.
+`dist/` is not committed. CI runs the tests on Node 22 and 24 with a frozen lockfile, then bumps
+the version, tags it, and publishes a release with the built tarball attached.
 
 ## License
 

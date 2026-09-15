@@ -19,14 +19,15 @@ jobs:
         node: ["22.x", "24.x"]
     steps:
       - uses: actions/checkout@v5
+      - uses: pnpm/action-setup@v4
       - uses: actions/setup-node@v5
         with:
           node-version: ${{ matrix.node }}
-          cache: npm
-      - run: npm ci
-      - run: npm run typecheck
-      - run: npm test
-      - run: npm run build
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm run typecheck
+      - run: pnpm test
+      - run: pnpm run build
 
   release:
     # Only after green tests on main, and never in response to the release commit itself.
@@ -42,11 +43,12 @@ jobs:
       - uses: actions/checkout@v5
         with:
           fetch-depth: 0
+      - uses: pnpm/action-setup@v4
       - uses: actions/setup-node@v5
         with:
           node-version: 24.x
-          cache: npm
-      - run: npm ci
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
 
       - name: Bump version, commit and tag
         id: bump
@@ -55,13 +57,13 @@ jobs:
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           # Pick up any release another run just pushed, so the bump lands on top of it.
           git pull --rebase origin main
-          version=$(npm version patch -m "chore: release v%s [skip ci]")
+          version=$(pnpm version patch --message "chore: release v%s [skip ci]")
           echo "version=$version" >> "$GITHUB_OUTPUT"
           git push --follow-tags origin main
 
       - name: Pack the published tarball
         run: |
-          npm pack
+          pnpm pack
           # Stable filename so the install command never has to name a version.
           cp telex-*.tgz telex.tgz
 
