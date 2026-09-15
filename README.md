@@ -9,14 +9,18 @@ ids in your config.
 ## Install
 
 ```sh
-npm i -g --install-links github:Sojaner/telex
+npm i -g https://github.com/Sojaner/telex/releases/latest/download/telex.tgz
 ```
 
-`--install-links` is needed because npm otherwise symlinks the global install into its own
-git cache, which it then deletes. Requires Node 22.6+.
+Requires Node 22.6+. Every green push to `main` bumps the patch version, tags it and
+publishes a release with the built tarball attached, so that URL is always current.
 
-`dist/` is committed so the install needs no build step — run `npm run build` before
-committing changes to `src/`.
+From a checkout instead:
+
+```sh
+git clone https://github.com/Sojaner/telex && cd telex
+npm install && npm i -g .        # or run it in place with: node src/cli.ts
+```
 
 ## Setup
 

@@ -1,0 +1,65 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        node: ["22.x", "24.x"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+          cache: npm
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm test
+      - run: npm run build
+
+  release:
+    # Only after green tests on main, and never in response to the release commit itself.
+    needs: test
+    if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request' && !startsWith(github.event.head_commit.message, 'chore: release')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24.x
+          cache: npm
+      - run: npm ci
+
+      - name: Bump version, commit and tag
+        id: bump
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          version=$(npm version patch -m "chore: release v%s [skip ci]")
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          git push --follow-tags origin main
+
+      - name: Pack the published tarball
+        run: |
+          npm pack
+          # Stable filename so the install command never has to name a version.
+          cp telex-*.tgz telex.tgz
+
+      - name: Publish the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "${{ steps.bump.outputs.version }}" \
+            --title "${{ steps.bump.outputs.version }}" \
+            --generate-notes \
+            telex.tgz telex-*.tgz
