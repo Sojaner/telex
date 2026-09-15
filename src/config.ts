@@ -2,7 +2,8 @@ import { readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 
-export type Bot = { token: string; chatId: number | string };
+/** allowFrom: Telegram user ids permitted to answer. Omit to trust anyone in the chat. */
+export type Bot = { token: string; chatId: number | string; allowFrom?: number[] };
 export type Config = { defaultBot?: string; bots: Record<string, Bot> };
 
 const configPath = () =>

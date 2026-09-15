@@ -1,4 +1,4 @@
-import { type BotSession, TelegramError, escapeHtml } from "./telegram.ts";
+import { type BotSession, type CallbackCtx, TelegramError, escapeHtml, MAX_MESSAGE_LEN } from "./telegram.ts";
 
 export type AskInput = {
   project: string;
@@ -6,6 +6,8 @@ export type AskInput = {
   options?: string[];
   expectText?: boolean;
   timeoutSeconds: number;
+  /** Telegram user ids allowed to answer. Empty means anyone in the configured chat. */
+  allowFrom?: number[];
 };
 
 export type AskResult =
@@ -16,7 +18,31 @@ export type AskResult =
 let counter = 0;
 const nextRequestId = () => `${Date.now().toString(36)}${(counter++).toString(36)}`;
 
-const body = (project: string, message: string) => `<b>${escapeHtml(project)}</b>\n\n${message}`;
+/** Telegram truncates long inline-button labels, so long choices move into the body as a numbered list. */
+const LABEL_LIMIT = 24;
+
+export function compose(input: AskInput): { text: string; buttonLabels: string[] } {
+  const options = input.options ?? [];
+  const numbered = options.some((o) => o.length > LABEL_LIMIT);
+  const list = numbered ? `\n\n${options.map((o, i) => `${i + 1}. ${escapeHtml(o)}`).join("\n")}` : "";
+  return {
+    text: `<b>${escapeHtml(input.project)}</b>\n\n${input.message}${list}`,
+    buttonLabels: numbered ? options.map((_, i) => String(i + 1)) : options,
+  };
+}
+
+/** Split on line boundaries where possible; the parse-mode fallback covers chunks that break a tag. */
+export function chunk(text: string, limit = MAX_MESSAGE_LEN): string[] {
+  const out: string[] = [];
+  let rest = text;
+  while (rest.length > limit) {
+    const cut = rest.lastIndexOf("\n", limit) > limit / 2 ? rest.lastIndexOf("\n", limit) : limit;
+    out.push(rest.slice(0, cut));
+    rest = rest.slice(cut).replace(/^\n/, "");
+  }
+  out.push(rest);
+  return out;
+}
 
 /** Send, wait for the user, then always leave the message in a settled state. */
 export async function ask(session: BotSession, chatId: number | string, input: AskInput): Promise<AskResult> {
@@ -24,25 +50,38 @@ export async function ask(session: BotSession, chatId: number | string, input: A
   const options = input.options ?? [];
   if (options.length && input.expectText) throw new Error("telex: use either options or expect_text, not both");
 
+  const { text, buttonLabels } = compose(input);
   const keyboard = options.length
-    ? options.map((label, i) => [{ text: label, callback_data: `telex:${requestId}:${i}` }])
+    ? buttonLabels.map((label, i) => [{ text: label, callback_data: `telex:${requestId}:${i}` }])
     : input.expectText
       ? [[{ text: "✍️ Reply", callback_data: `telex:${requestId}:text` }]]
       : [];
 
-  const sent = await send(session, chatId, body(input.project, input.message), keyboard);
+  // Only the final chunk carries the keyboard, so the buttons sit under the whole question.
+  const chunks = chunk(text);
+  let sent!: { message_id: number };
+  for (const [i, part] of chunks.entries()) {
+    sent = await send(session, chatId, part, i === chunks.length - 1 ? keyboard : []);
+  }
   const messageId = sent.message_id;
+  const tail = chunks[chunks.length - 1];
   if (!keyboard.length) return { status: "sent", message_id: messageId };
 
   const deadline = Date.now() + input.timeoutSeconds * 1000;
-  const answer = await waitForAnswer(session, chatId, requestId, options, deadline);
+  const answer = await waitForAnswer(session, chatId, requestId, options, deadline, input.allowFrom);
 
   if (!answer) {
-    await settle(session, chatId, messageId, input, "⏳ <i>No response — stale.</i>");
+    await settle(session, chatId, messageId, tail, "⏳ <i>No response — stale.</i>");
     return { status: "timeout", message_id: messageId };
   }
-  await settle(session, chatId, messageId, input, `✅ <b>${escapeHtml(answer.value)}</b>`);
+  await settle(session, chatId, messageId, tail, `✅ <b>${escapeHtml(answer.value)}</b>`);
   return { status: "answered", response: answer.value, kind: answer.kind, message_id: messageId };
+}
+
+/** An inline keyboard is clickable by anyone who can see it, so authorise the tap, not the send. */
+function authorized(ctx: CallbackCtx, chatId: number | string, allowFrom?: number[]) {
+  if (ctx.chatId !== undefined && String(ctx.chatId) !== String(chatId)) return false;
+  return !allowFrom?.length || (ctx.fromId !== undefined && allowFrom.includes(ctx.fromId));
 }
 
 async function waitForAnswer(
@@ -51,23 +90,40 @@ async function waitForAnswer(
   requestId: string,
   options: string[],
   deadline: number,
+  allowFrom?: number[],
 ): Promise<{ value: string; kind: "choice" | "text" } | null> {
-  const tap = await until<{ payload: string; callbackId: string }>(deadline, (resolve) =>
-    session.onCallback(requestId, (payload, ctx) => resolve({ payload, callbackId: ctx.callbackId })),
+  const tap = await until<{ payload: string; ctx: CallbackCtx }>(deadline, (resolve) =>
+    session.onCallback(requestId, (payload, ctx) => {
+      if (!authorized(ctx, chatId, allowFrom)) {
+        void session.api("answerCallbackQuery", {
+          callback_query_id: ctx.callbackId,
+          text: "⛔ Not your prompt.",
+        }).catch(() => {});
+        return;
+      }
+      resolve({ payload, ctx });
+    }),
   );
   if (!tap) return null;
+  const toast = (text: string) =>
+    session.api("answerCallbackQuery", { callback_query_id: tap.ctx.callbackId, text }).catch(() => {});
 
   if (tap.payload !== "text") {
-    await session.api("answerCallbackQuery", { callback_query_id: tap.callbackId }).catch(() => {});
     const value = options[Number(tap.payload)];
+    await toast(value === undefined ? "" : `✓ ${value.slice(0, 60)}`);
     return value === undefined ? null : { value, kind: "choice" };
   }
 
-  await session.api("answerCallbackQuery", { callback_query_id: tap.callbackId, text: "Send your reply" }).catch(() => {});
+  await toast("✍️ Type your answer in the chat.");
   const prompt = await send(session, chatId, "✍️ <i>Reply to this message with your response.</i>", [], {
     force_reply: true,
   });
-  const text = await until<string>(deadline, (resolve) => session.onText(chatId, resolve));
+  const text = await until<string>(deadline, (resolve) =>
+    session.onText(chatId, (value, fromId) => {
+      if (allowFrom?.length && (fromId === undefined || !allowFrom.includes(fromId))) return;
+      resolve(value);
+    }),
+  );
   await session.api("deleteMessage", { chat_id: chatId, message_id: prompt.message_id }).catch(() => {});
   return text === null ? null : { value: text, kind: "text" };
 }
@@ -88,21 +144,21 @@ function until<T>(deadline: number, subscribe: (resolve: (v: T) => void) => () =
   });
 }
 
-/** Drop the keyboard and stamp the outcome onto the original message. */
+/** Drop the keyboard and stamp the outcome onto the message that carried it. */
 async function settle(
   session: BotSession,
   chatId: number | string,
   messageId: number,
-  input: AskInput,
+  text: string,
   footer: string,
 ) {
   await session.api("editMessageText", {
     chat_id: chatId,
     message_id: messageId,
-    text: `${body(input.project, input.message)}\n\n${footer}`,
+    text: `${text}\n\n${footer}`,
     parse_mode: "HTML",
     reply_markup: { inline_keyboard: [] },
-  }).catch(() => {});
+  }).catch(() => {}); // "message is not modified" and friends are not worth failing the answer over
 }
 
 /** HTML is Telegram's forgiving parse mode, but agents still emit stray tags — fall back to plain text. */
@@ -113,7 +169,11 @@ async function send(
   keyboard: unknown[],
   extraMarkup: Record<string, unknown> = {},
 ): Promise<{ message_id: number }> {
-  const reply_markup = keyboard.length ? { inline_keyboard: keyboard } : Object.keys(extraMarkup).length ? extraMarkup : undefined;
+  const reply_markup = keyboard.length
+    ? { inline_keyboard: keyboard }
+    : Object.keys(extraMarkup).length
+      ? extraMarkup
+      : undefined;
   try {
     return await session.api("sendMessage", { chat_id: chatId, text, parse_mode: "HTML", reply_markup });
   } catch (err) {

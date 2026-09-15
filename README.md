@@ -17,6 +17,10 @@ Each bot needs a token from [@BotFather](https://t.me/BotFather) and the `chatId
 it should write to (message the bot, then open
 `https://api.telegram.org/bot<token>/getUpdates` and read `message.chat.id`).
 
+Optional `allowFrom` is a list of Telegram user ids allowed to answer. In a group everyone can
+see and tap your buttons, so set it there. Give telex its own bot — two processes polling the
+same token fight over updates.
+
 Config is read from `$TELEX_CONFIG`, else `~/.config/telex/config.json`.
 
 Register with your agent:
@@ -55,6 +59,16 @@ Returns one of:
 On `timeout` the buttons are stripped and the message is marked stale, so a late tap can't
 answer a question nobody is listening to any more. What to do next — retry, continue without
 the user, stop — is entirely the agent's call; telex has no opinion.
+
+## Behaviour worth knowing
+
+- Messages over Telegram's limit are split; only the last part carries the buttons.
+- Choices longer than 24 characters are listed in the message body and the buttons become
+  `1`, `2`, `3` — Telegram truncates long button labels.
+- Broken HTML is re-sent as plain text instead of failing the call.
+- Updates that arrived before the question was asked are discarded, so an old message can't be
+  read as an answer. Slash commands are never taken as an answer either.
+- `429` responses are honoured (`retry_after`) and bot tokens are stripped from error messages.
 
 ## Tests
 

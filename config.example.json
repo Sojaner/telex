@@ -1,7 +1,7 @@
 {
   "defaultBot": "main",
   "bots": {
-    "main": { "token": "123456:ABC-DEF-your-bot-token", "chatId": 987654321 },
+    "main": { "token": "123456:ABC-DEF-your-bot-token", "chatId": 987654321, "allowFrom": [987654321] },
     "alerts": { "token": "234567:GHI-JKL-another-bot-token", "chatId": 987654321 }
   }
 }

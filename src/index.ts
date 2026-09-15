@@ -51,6 +51,7 @@ server.registerTool(
       options,
       expectText: expect_text,
       timeoutSeconds: timeout_seconds,
+      allowFrom: target.allowFrom,
     });
     return { content: [{ type: "text" as const, text: JSON.stringify(result) }] };
   },
