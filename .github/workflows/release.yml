@@ -80,6 +80,9 @@ jobs:
           cp sojaner-telex-*.tgz telex.tgz
 
       - name: Publish to npm
+        # Skipped rather than failed while the scope has no token, so the GitHub
+        # release still goes out.
+        if: ${{ secrets.NPM_TOKEN != '' }}
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
         # Publishes the very tarball attached to the release, not a second build.
