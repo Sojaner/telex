@@ -43,7 +43,7 @@ Or run it from a checkout:
 git clone https://github.com/Sojaner/telex && cd telex
 corepack enable && pnpm install
 node src/cli.ts --help          # runs the TypeScript directly, no build
-pnpm run build && npm i -g .    # or link this checkout as the global telex
+pnpm run build && pnpm link --global   # or link this checkout as the global telex
 ```
 
 Upgrade with the same install command; uninstall with `npm rm -g telex`.
