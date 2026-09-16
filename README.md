@@ -31,10 +31,20 @@ Requires Node 22.6 or newer. Every green push to `main` bumps the patch version,
 attaches a freshly built tarball to a GitHub release, so that URL always points at the latest
 build.
 
-Pin a version if you prefer:
+Or install straight from the repo, which builds it on your machine — shorter to type, a few
+seconds slower, and npm asks to approve the build script:
+
+```sh
+npm i -g github:Sojaner/telex
+```
+
+Pin a version either way (`@latest` is not a thing for GitHub specs — use a tag or a semver
+range):
 
 ```sh
 npm i -g https://github.com/Sojaner/telex/releases/download/v0.1.2/telex.tgz
+npm i -g github:Sojaner/telex#v0.1.2
+npm i -g "github:Sojaner/telex#semver:^0.1"
 ```
 
 Or run it from a checkout:
@@ -476,9 +486,8 @@ telex serve < /dev/null
 
 ## Development
 
-This repo uses **pnpm** — `package-lock.json` is not accepted, and `npm install` in a checkout
-stops with a message telling you so. The published tarball is unaffected: install it with npm,
-pnpm or anything else.
+This repo uses **pnpm** — `package-lock.json` is gitignored, so don't commit one. Installing
+telex itself needs none of this: npm, pnpm or anything else can install the tarball or the repo.
 
 ```sh
 corepack enable   # uses the pnpm version pinned in packageManager
