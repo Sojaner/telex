@@ -103,7 +103,7 @@ telex add [name]              add a bot, guided; or --token … --chat-id …
 telex list                    configured bots, tokens masked
 telex set <name> [options]    change token / chat / allowlist / default
 telex remove <name>           delete a bot
-telex config [name]           print the MCP registration for a project
+telex config [name]           install the MCP registration into this project
 telex serve                   run the MCP server over stdio (what agents launch)
 ```
 
@@ -165,13 +165,27 @@ keeping their own copy of your tokens.
 ## Registering with an agent
 
 ```sh
+cd ~/code/acme-api
 telex config
 ```
 
-prints the registration for every agent that can take a project-level MCP config. The server
-command is always `telex serve`.
+asks whether this directory is the project you mean, then which agent to install for, and does
+the install: it runs that agent's own CLI when it has one, and writes the config file itself when
+it does not. The server command is always `telex serve`.
 
-Agents that install it themselves — run in the project root:
+| Flag | Meaning |
+|---|---|
+| `--agent <id>` | skip the prompts: `claude`, `gemini`, `qwen`, `codex`, `cursor`, `roo`, `vscode`, `zed`, `amp`, `opencode`, `crush` |
+| `--scope local\|project` | for agents with both: the gitignored file or the committed one |
+| `--print` | only show the commands and file shapes; write nothing |
+| `-y` | don't ask about the current directory |
+| `--json` | print just the `mcpServers` object |
+
+Required for a non-interactive run: `--agent`, plus `--scope` for agents that have both files.
+Writing a file merges into whatever is already there rather than replacing it, and `--scope local`
+adds the file to `.gitignore`.
+
+Agents that install it themselves — `telex config --agent claude` runs:
 
 ```sh
 claude mcp add --scope project telex -- telex serve      # Claude Code
@@ -179,7 +193,7 @@ gemini mcp add --scope project telex telex serve         # Gemini CLI
 qwen mcp add --scope project telex telex serve           # Qwen Code
 ```
 
-Agents you configure by committing a file — same server, different shape per agent:
+Agents telex configures by writing the file — same server, different shape per agent:
 
 | Agent | File | Shape |
 |---|---|---|
@@ -191,12 +205,14 @@ Agents you configure by committing a file — same server, different shape per a
 | Amp | `.amp/settings.json` | `{"amp.mcpServers": {"telex": {"command": "telex", "args": ["serve"]}}}` |
 | opencode | `opencode.json` | `{"mcp": {"telex": {"type": "local", "command": ["telex", "serve"]}}}` |
 | Crush | `.crush.json` | `{"mcp": {"telex": {"type": "stdio", "command": "telex", "args": ["serve"]}}}` |
-| Codex CLI | `.codex/config.toml` | `[mcp_servers.telex]` / `command = "telex"` / `args = ["serve"]` |
+| Codex CLI | `.codex/config.toml` or `.codex/config.local.toml` | `[mcp_servers.telex]` / `command = "telex"` / `args = ["serve"]` |
 
-Codex only reads `.codex/config.toml` for projects you have marked trusted. Anything else that
+Codex is the one with two files: `.codex/config.toml` is committed and shared with the team,
+`.codex/config.local.toml` is your own and gitignored — `--scope project` or `--scope local`.
+Codex only reads either for projects you have marked trusted. Anything else that
 speaks MCP takes the `mcpServers` shape — `claude_desktop_config.json`, Continue, and the rest.
 
-`telex config --json` prints just that `mcpServers` object. For one bot everywhere instead of one
+For one bot everywhere instead of one
 per project, install at user scope: `claude mcp add --scope user telex -- telex serve`.
 
 If `telex` is not on the agent's `PATH` — GUI apps often have a shorter `PATH` than your shell —
@@ -213,7 +229,7 @@ use the absolute path, or point Node at the installed entry point:
 }
 ```
 
-`telex config` prints that path for your machine.
+`telex config --print` prints that path for your machine.
 
 ### Per-project configuration
 
@@ -223,10 +239,10 @@ read it, and you can mute one project's bot without muting the rest.
 ```sh
 cd ~/code/acme-api
 telex add acme-api                       # its own bot, its own chat
-telex config acme-api
+telex config acme-api                    # same install, pinned to that bot
 ```
 
-which prints the same list as above, with `TELEX_BOT=acme-api` threaded into every entry:
+which threads `TELEX_BOT=acme-api` into whatever it installs:
 
 ```sh
 claude mcp add --scope project telex --env TELEX_BOT=acme-api -- telex serve
