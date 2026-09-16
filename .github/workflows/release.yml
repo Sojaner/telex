@@ -64,9 +64,6 @@ jobs:
 
       - name: Pack the published tarball
         run: |
-          # The preinstall guard is for contributors only; shipping it makes npm
-          # warn about install scripts on every user's global install.
-          node -e "const f='package.json',p=require('./'+f);delete p.scripts.preinstall;require('fs').writeFileSync(f,JSON.stringify(p,null,2)+'\n')"
           pnpm pack
           # Stable filename so the install command never has to name a version.
           cp telex-*.tgz telex.tgz

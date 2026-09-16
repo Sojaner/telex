@@ -7,9 +7,8 @@
     "telex": "dist/cli.js"
   },
   "scripts": {
-    "preinstall": "node -e \"const fs=require('fs'),ua=process.env.npm_config_user_agent||'';if(fs.existsSync('src')&&!ua.startsWith('pnpm')){console.error('\\\\nThis repo uses pnpm. Run: corepack enable && pnpm install\\\\n');process.exit(1)}\"",
     "build": "tsc -p tsconfig.build.json",
-    "prepack": "pnpm run build",
+    "prepare": "npm run build",
     "telex": "node src/cli.ts",
     "typecheck": "tsc --noEmit",
     "test": "node --test test/*.test.ts"
