@@ -83,11 +83,7 @@ jobs:
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
         # Publishes the very tarball attached to the release, not a second build.
-        run: |
-          npm publish sojaner-telex-*.tgz --access public
-          # A scope can default to restricted, which --access alone does not undo;
-          # this is idempotent once the package is already public.
-          npm access set status=public @sojaner/telex
+        run: npm publish sojaner-telex-*.tgz --access public
 
       - name: Publish the release
         env:
