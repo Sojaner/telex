@@ -31,8 +31,8 @@ Requires Node 22.6 or newer. Every green push to `main` bumps the patch version,
 attaches a freshly built tarball to a GitHub release, so that URL always points at the latest
 build.
 
-Or install straight from the repo, which builds it on your machine — shorter to type, a few
-seconds slower, and npm asks to approve the build script:
+Or install straight from the repo — shorter to type, and `dist/` is committed, so this
+installs the same prebuilt output rather than compiling on your machine:
 
 ```sh
 npm i -g github:Sojaner/telex
