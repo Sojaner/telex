@@ -24,28 +24,22 @@ API, and only ever messages the chats you configured. Nothing listens on a port.
 ## Install
 
 ```sh
+npm i -g @sojaner/telex
+```
+
+Requires Node 22.6 or newer. The binary is called `telex` whatever you install it from.
+
+Pin a version, or take it straight from the GitHub release if you prefer not to go through
+the registry:
+
+```sh
+npm i -g @sojaner/telex@0.1          # a range, or any exact published version
 npm i -g https://github.com/Sojaner/telex/releases/latest/download/telex.tgz
+npm i -g https://github.com/Sojaner/telex/releases/download/v0.1.14/telex.tgz
 ```
 
-Requires Node 22.6 or newer. Every green push to `main` bumps the patch version, tags it and
-attaches a freshly built tarball to a GitHub release, so that URL always points at the latest
-build.
-
-Or install straight from the repo — shorter to type, and `dist/` is committed, so this
-installs the same prebuilt output rather than compiling on your machine:
-
-```sh
-npm i -g github:Sojaner/telex
-```
-
-Pin a version either way (`@latest` is not a thing for GitHub specs — use a tag or a semver
-range):
-
-```sh
-npm i -g https://github.com/Sojaner/telex/releases/download/v0.1.2/telex.tgz
-npm i -g github:Sojaner/telex#v0.1.2
-npm i -g "github:Sojaner/telex#semver:^0.1"
-```
+Every green push to `main` bumps the patch version, publishes it to npm and attaches the same
+tarball to a GitHub release, so both routes carry identical builds.
 
 Or run it from a checkout:
 
@@ -56,7 +50,7 @@ node src/cli.ts --help          # runs the TypeScript directly, no build
 pnpm run build && pnpm link --global   # or link this checkout as the global telex
 ```
 
-Upgrade with the same install command; uninstall with `npm rm -g telex`.
+Upgrade with the same install command; uninstall with `npm rm -g @sojaner/telex`.
 
 ---
 
@@ -486,8 +480,10 @@ telex serve < /dev/null
 
 ## Development
 
-This repo uses **pnpm** — `package-lock.json` is gitignored, so don't commit one. Installing
-telex itself needs none of this: npm, pnpm or anything else can install the tarball or the repo.
+This repo uses **pnpm**. `npm install` in a checkout stops at a `preinstall` guard telling you
+so, CI fails on a committed `package-lock.json` or `yarn.lock`, and `pnpm install --frozen-lockfile`
+fails the build if `package.json` and `pnpm-lock.yaml` ever drift apart. The published package is
+unaffected: the guard is stripped at pack time, so installing telex runs no scripts at all.
 
 ```sh
 corepack enable   # uses the pnpm version pinned in packageManager

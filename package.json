@@ -1,5 +1,5 @@
 {
-  "name": "telex",
+  "name": "@sojaner/telex",
   "version": "0.1.14",
   "description": "MCP server that lets local AI agents ask users questions through Telegram bots",
   "type": "module",
@@ -7,7 +7,9 @@
     "telex": "dist/cli.js"
   },
   "scripts": {
+    "preinstall": "node -e \"const fs=require('fs'),ua=process.env.npm_config_user_agent||'';if(fs.existsSync('src')&&!ua.startsWith('pnpm')){console.error('\\\\nThis repo uses pnpm. Run: corepack enable && pnpm install\\\\n');process.exit(1)}\"",
     "build": "tsc -p tsconfig.build.json",
+    "prepare": "npm run build",
     "prepack": "pnpm run build",
     "telex": "node src/cli.ts",
     "typecheck": "tsc --noEmit",
@@ -26,6 +28,9 @@
     "typescript": "^5.9.0"
   },
   "license": "MIT",
+  "publishConfig": {
+    "access": "public"
+  },
   "files": [
     "dist",
     "config.example.json",
