@@ -19,11 +19,18 @@ jobs:
         node: ["22.x", "24.x"]
     steps:
       - uses: actions/checkout@v5
+      - name: Reject non-pnpm lockfiles
+        run: |
+          for f in package-lock.json yarn.lock bun.lock bun.lockb; do
+            [ -e "$f" ] && { echo "::error::$f committed — this repo uses pnpm: corepack enable && pnpm install"; exit 1; }
+          done; true
       - uses: pnpm/action-setup@v4
       - uses: actions/setup-node@v5
         with:
           node-version: ${{ matrix.node }}
           cache: pnpm
+      # Fails the PR if package.json and pnpm-lock.yaml drifted apart, which is
+      # what happens when someone adds a dependency with another package manager.
       - run: pnpm install --frozen-lockfile
       - run: pnpm run typecheck
       - run: pnpm test
