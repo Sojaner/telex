@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { BotSession, TelegramError, toTelegramHtml, type Update } from "../src/telegram.ts";
+import { BotSession, TelegramError, toTelegramHtml, fromMarkdown, type Update } from "../src/telegram.ts";
 import { ask, chunk, compose, receipt, refuse, heartbeat, markExpired } from "../src/ask.ts";
 
 /** Fake Bot API: records calls, answers getUpdates with nothing so we can inject updates by hand. */
@@ -300,4 +300,27 @@ test("a message Telegram still refuses arrives as readable text, not raw markup"
   assert.equal(retry.parse_mode, undefined);
   assert.equal(retry.text.includes("<"), false, "the retry shows words, not tags");
   assert.match(retry.text, /unclosed and tangled/);
+});
+
+test("Markdown an agent writes out of habit is converted, not shown as punctuation", async () => {
+  const { session, calls } = fakeSession();
+  await ask(session, 7, {
+    project: "Lexi",
+    message: "**Completed** — see `src/app.ts` and [the PR](https://x.test).",
+    timeoutSeconds: 5,
+  });
+
+  const sent = calls[0].params.text;
+  assert.equal(calls[0].params.parse_mode, "HTML");
+  assert.match(sent, /<b>Completed<\/b>/);
+  assert.match(sent, /<code>src\/app\.ts<\/code>/);
+  assert.match(sent, /<a href="https:\/\/x\.test">the PR<\/a>/);
+  assert.doesNotMatch(sent, /\*\*|`/, "no markup punctuation survives");
+});
+
+test("Markdown conversion leaves code contents and globs alone", () => {
+  const html = (s: string) => fromMarkdown(toTelegramHtml(s));
+  assert.equal(html("`List<string>`"), "<code>List&lt;string&gt;</code>", "angle brackets inside code stay escaped");
+  assert.equal(html("glob src/*.ts and **/*.js"), "glob src/*.ts and **/*.js", "single asterisks are not italics");
+  assert.equal(html("```js\nconst a = 1;\n```"), "<pre><code>const a = 1;</code></pre>");
 });

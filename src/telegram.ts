@@ -83,6 +83,19 @@ export function toTelegramHtml(text: string): string {
     .replace(/\s+$/, "");
 }
 
+/**
+ * Agents reach for Markdown by habit, and Telegram renders none of it. Converting the four
+ * unambiguous constructs costs nothing and saves a message that would otherwise arrive as
+ * asterisks and backticks. Single-asterisk italics are left alone: globs and file names use them.
+ */
+export function fromMarkdown(text: string): string {
+  return text
+    .replace(/```[a-z0-9+#-]*\n([\s\S]*?)```/gi, (_, code: string) => `<pre><code>${code.replace(/\n$/, "")}</code></pre>`)
+    .replace(/`([^`\n]+)`/g, "<code>$1</code>")
+    .replace(/\*\*([^*\n]+)\*\*/g, "<b>$1</b>")
+    .replace(/\[([^\]\n]+)\]\((https?:\/\/[^\s)]+)\)/g, '<a href="$2">$1</a>');
+}
+
 /** Last resort when even the sanitised HTML will not parse: readable text beats visible markup. */
 export const stripHtml = (text: string) =>
   text

@@ -1,4 +1,4 @@
-import { type BotSession, type CallbackCtx, type Incoming, TelegramError, escapeHtml, toTelegramHtml, stripHtml, MAX_MESSAGE_LEN } from "./telegram.ts";
+import { type BotSession, type CallbackCtx, type Incoming, TelegramError, escapeHtml, toTelegramHtml, fromMarkdown, stripHtml, MAX_MESSAGE_LEN } from "./telegram.ts";
 
 export type AskInput = {
   project: string;
@@ -26,7 +26,7 @@ export function compose(input: AskInput): { text: string; buttonLabels: string[]
   const numbered = options.some((o) => o.length > LABEL_LIMIT);
   const list = numbered ? `\n\n${options.map((o, i) => `${i + 1}. ${escapeHtml(o)}`).join("\n")}` : "";
   return {
-    text: `<b>${escapeHtml(input.project)}</b>\n\n${toTelegramHtml(input.message)}${list}`,
+    text: `<b>${escapeHtml(input.project)}</b>\n\n${fromMarkdown(toTelegramHtml(input.message))}${list}`,
     buttonLabels: numbered ? options.map((_, i) => String(i + 1)) : options,
   };
 }

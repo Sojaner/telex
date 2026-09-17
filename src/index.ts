@@ -107,9 +107,11 @@ server.registerTool(
       "Send a message to the user via Telegram and optionally wait for their answer.",
       "Use it to ask for a decision, get missing information, or report that long-running work finished.",
       "",
-      `Formatting: 'message' is rendered with Telegram's HTML subset — <b>, <i>, <u>, <s>, <code>, <pre>, <a href="">, <blockquote>.`,
-      "Escape any literal &, < and > as &amp; &lt; &gt;. Markdown is NOT rendered, and there is no <br> —",
-      "use real newlines. Layout tags (<p>, <div>, <ul>) are stripped and anything else shows as text.",
+      "Style the message — an unformatted wall of text is hard to read on a phone. 'message' takes",
+      `Telegram HTML: <b>the headline outcome</b>, <code>versions, paths, identifiers</code>, <i>asides</i>,`,
+      `<a href="url">links</a>, <pre>blocks</pre>, <blockquote>quotes</blockquote>, <s>struck</s>, <u>underline</u>.`,
+      "telex also converts **bold**, `code`, ``` fences ``` and [links](url) if you write Markdown by habit.",
+      "Escape literal &, < and > as &amp; &lt; &gt;. Use real newlines, not <br>; layout tags are stripped.",
       "",
       "Pass 'options' for a multiple-choice question (buttons), or 'expect_text' for a free-text answer.",
       "With neither, the message is a one-way notification and returns immediately.",
@@ -128,7 +130,8 @@ server.registerTool(
     inputSchema: {
       ...identity,
       project: z.string().min(1).describe("Project or task name, shown as the message heading."),
-      message: z.string().min(1).describe("The copy to show the user, in Telegram HTML."),
+      message: z.string().min(1)
+        .describe("The copy to show the user, in Telegram HTML. Style it: <b> the outcome, <code> every version, path and identifier."),
       options: z.array(z.string().min(1)).min(1).max(10).optional()
         .describe("Single-choice answers, rendered as buttons. Mutually exclusive with expect_text."),
       expect_text: z.boolean().optional()

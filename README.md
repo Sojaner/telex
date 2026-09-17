@@ -302,11 +302,16 @@ notification and the call returns immediately.
 <a href=""> <blockquote>`. Literal `&`, `<` and `>` must be escaped as `&amp; &lt; &gt;`. Markdown
 is not rendered.
 
-Agents write ordinary HTML anyway, so telex translates before sending: `<br>` and `</p>` become
-newlines, `<li>` becomes a bullet, layout tags like `<p>` and `<div>` are dropped, and anything
-else Telegram doesn't know is escaped so it shows as text instead of breaking the parse. Only if
-the result still won't parse is the message re-sent as plain text, with the tags stripped rather
-than left visible.
+Agents write ordinary HTML and Markdown anyway, so telex translates before sending:
+
+- `<br>` and `</p>` become newlines, `<li>` becomes a bullet, layout tags (`<p>`, `<div>`, `<ul>`)
+  are dropped, and anything else Telegram doesn't know is escaped so it shows as text instead of
+  breaking the parse.
+- `**bold**`, `` `code` ``, ``` ``` ``` fences and `[links](url)` are converted. Single-asterisk
+  italics are left alone, because globs and filenames use asterisks too.
+
+Only if the result still won't parse is the message re-sent as plain text, with the tags stripped
+rather than left visible.
 
 **Results.**
 
