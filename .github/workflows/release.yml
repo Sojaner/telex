@@ -58,16 +58,23 @@ jobs:
           registry-url: https://registry.npmjs.org
       - run: pnpm install --frozen-lockfile
 
-      - name: Bump version, commit and tag
+      - name: Tag the release
         id: bump
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          # Pick up any release another run just pushed, so the bump lands on top of it.
+          # Pick up any release another run just pushed, so this one lands on top of it.
           git pull --rebase origin main
-          pnpm version patch --message "chore: release v%s [skip ci]"
-          # pnpm version prints prose, not the tag, so read the result back.
-          echo "version=v$(node -p "require('./package.json').version")" >> "$GITHUB_OUTPUT"
+          version="v$(node -p "require('./package.json').version")"
+          if git rev-parse -q --verify "refs/tags/$version" > /dev/null; then
+            # Nobody chose a version in this push, so take the next patch.
+            pnpm version patch --message "chore: release v%s [skip ci]"
+            version="v$(node -p "require('./package.json').version")"
+          else
+            # The author bumped package.json deliberately; release what they asked for.
+            git tag -a "$version" -m "chore: release $version"
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
           git push --follow-tags origin main
 
       - name: Pack the published tarball

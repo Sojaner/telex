@@ -80,10 +80,10 @@ export async function ask(session: BotSession, chatId: number | string, input: A
 
 /** What the user sees under their own message as it moves through the queue. */
 const RECEIPT = {
-  held: "📥 <i>Held for the agent's next check-in.</i>",
+  held: "🕦 <i>Held for the agent's next check-in.</i>",
   delivered: "📬 <i>Delivered to the agent.</i>",
-  expired: "⌛ <i>Expired — the agent never picked this up. Send it again if it still matters.</i>",
-  refused: "⛔ <i>Not accepted — no agent has checked in for this project yet.</i>",
+  expired: "🗑️ <i>Expired — the agent never picked this up. Send it again if it still matters.</i>",
+  refused: "‼️ <i>Not accepted — no agent has checked in for this project yet.</i>",
 } as const;
 
 export type Delivered = { text: string; received_at: string; waited_seconds: number };

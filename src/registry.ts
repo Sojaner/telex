@@ -3,18 +3,47 @@
  * Each project's agent runs its own server; only a shared file can tell them apart.
  */
 import { readFileSync, writeFileSync, mkdirSync, renameSync } from "node:fs";
+import { execFileSync } from "node:child_process";
 import { homedir } from "node:os";
-import { dirname, join } from "node:path";
+import { dirname, join, resolve } from "node:path";
 
 export type Session = {
+  /** Identifies one agent session across calls, whatever it calls itself on any given one. */
+  session_id: string;
   bot: string;
   project: string;
+  /** The repository all of a project's worktrees share. Two worktrees are one project, not two. */
+  repo: string;
   agent: string;
   pid: number;
   interval_seconds: number;
   started_at: string;
   last_seen: string;
 };
+
+const repoCache = new Map<string, string>();
+
+/**
+ * The identity a project keeps across its worktrees: every worktree of a repository reports the
+ * same common git directory, so agents working in two of them are not two projects.
+ */
+export function repoOf(projectPath: string): string {
+  const cached = repoCache.get(projectPath);
+  if (cached) return cached;
+  let repo = resolve(projectPath);
+  try {
+    const common = execFileSync("git", ["-C", projectPath, "rev-parse", "--path-format=absolute", "--git-common-dir"], {
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "ignore"],
+    }).trim();
+    // /repo/.git for the main worktree and every linked worktree alike; bare repos report themselves.
+    if (common) repo = common.endsWith("/.git") ? dirname(common) : common;
+  } catch {
+    // Not a repository, or no git — the path is its own identity.
+  }
+  repoCache.set(projectPath, repo);
+  return repo;
+}
 
 export const statePath = () =>
   process.env.TELEX_STATE ??
@@ -54,24 +83,29 @@ export function isLive(session: Session, now: number) {
   return running(session.pid) && now - Date.parse(session.last_seen) <= grace;
 }
 
-export type Registration = Omit<Session, "started_at" | "last_seen">;
+export type Registration = Omit<Session, "started_at" | "last_seen" | "repo"> & { repo?: string };
 
 /**
- * Record this agent and return the other live agents on the same bot. Two of them polling one
- * token split the updates between themselves, so the caller warns the user about the ones returned.
+ * Record this agent and return the other live agents that would fight it for the same bot.
+ * Two pollers on one token split the updates between them, so the caller warns about these.
+ * A session is matched by its id, not by name or pid: one session may call itself different
+ * things on different calls, and telex must not read that as a second agent.
  */
 export function touch(entry: Registration, now = Date.now()): Session[] {
   const stamp = new Date(now).toISOString();
-  const others = read().filter((s) => !(s.pid === entry.pid && s.bot === entry.bot) && isLive(s, now));
-  const mine = read().find((s) => s.pid === entry.pid && s.bot === entry.bot);
-  write([...others, { ...entry, started_at: mine?.started_at ?? stamp, last_seen: stamp }]);
-  return others.filter((s) => s.bot === entry.bot);
+  const repo = entry.repo ?? repoOf(entry.project);
+  const existing = read();
+  const others = existing.filter((s) => s.session_id !== entry.session_id && isLive(s, now));
+  const mine = existing.find((s) => s.session_id === entry.session_id);
+  write([...others, { ...entry, repo, started_at: mine?.started_at ?? stamp, last_seen: stamp }]);
+  // Worktrees of one repository are one project sharing one bot deliberately; that is not a clash.
+  return others.filter((s) => s.bot === entry.bot && s.repo !== repo);
 }
 
-/** Drop this process's record. Best effort — a crash is covered by the liveness check instead. */
-export function release(pid = process.pid) {
+/** Drop this session's record. Best effort — a crash is covered by the liveness check instead. */
+export function release(sessionId: string) {
   try {
-    write(read().filter((s) => s.pid !== pid));
+    write(read().filter((s) => s.session_id !== sessionId));
   } catch {
     // nothing useful to do while exiting
   }

@@ -5,7 +5,8 @@ import { z } from "zod";
 import { loadConfig, pickBot, type Bot } from "./config.ts";
 import { sessionFor, type BotSession } from "./telegram.ts";
 import { ask, receipt, markExpired, refuse, heartbeat, deliver } from "./ask.ts";
-import { touch, release, type Session } from "./registry.ts";
+import { touch, release, repoOf, type Session } from "./registry.ts";
+import { randomUUID } from "node:crypto";
 
 const config = loadConfig();
 const botNames = Object.keys(config.bots);
@@ -34,25 +35,27 @@ const warned = new Set<string>();
  * Every call says who is calling. That fixes the expiry clock from the very first interaction and,
  * through the shared registry, lets separate telex processes notice they share a bot.
  */
-function checkIn(botName: string, bot: Bot, caller: Caller): BotSession {
+function checkIn(botName: string, bot: Bot, caller: Caller): { session: BotSession; sessionId: string } {
   const session = watch(bot);
+  const sessionId = caller.session_id ?? processSession;
   session.setInboxTtl(bot.chatId, caller.interval_seconds * MISSED_BEATS * 1000);
   checkedIn = true;
 
   const others = touch({
+    session_id: sessionId,
     bot: botName,
     project: caller.project_path,
+    repo: repoOf(caller.project_path),
     agent: caller.agent,
     pid: process.pid,
     interval_seconds: caller.interval_seconds,
   });
   for (const other of others) {
-    const key = `${other.pid}:${other.project}`;
-    if (warned.has(key)) continue;
-    warned.add(key);
+    if (warned.has(other.session_id)) continue;
+    warned.add(other.session_id);
     void conflictWarning(session, bot, caller, other);
   }
-  return session;
+  return { session, sessionId };
 }
 
 /** Telegram hands each update to one poller only, so a shared bot silently loses half the traffic. */
@@ -76,7 +79,13 @@ const server = new McpServer({ name: "telex", version: "0.1.0" });
 /** Heartbeats a message may sit through before telex gives up on the agent's behalf. */
 const MISSED_BEATS = 3;
 
-type Caller = { project_path: string; agent: string; interval_seconds: number };
+type Caller = { project_path: string; agent: string; interval_seconds: number; session_id?: string };
+
+/**
+ * Identifies this run of the server. An agent that never echoes its session id still gets one
+ * stable identity; one that does keeps it across a restart, or hands it to whoever calls next.
+ */
+const processSession = randomUUID();
 
 /** Identity every call carries, so telex knows who is on the other end and how often to expect them. */
 const identity = {
@@ -84,6 +93,8 @@ const identity = {
   agent: z.string().min(1).describe(`Your name, e.g. "claude-code", "codex", "gemini-cli".`),
   interval_seconds: z.number().int().min(10).max(3600).default(60)
     .describe(`How often you call heartbeat. Messages expire after ${3} missed intervals, so be honest.`),
+  session_id: z.string().uuid().optional()
+    .describe("The session_id from your last telex result. Omit on your first call; always send it back after that — it is how telex knows later calls are still you and not a second agent."),
 };
 
 const json = (value: unknown) => ({ content: [{ type: "text" as const, text: JSON.stringify(value) }] });
@@ -129,7 +140,7 @@ server.registerTool(
   },
   async ({ project, message, options, expect_text, timeout_seconds, bot, ...caller }) => {
     const { name: targetName, bot: target } = pickBot(config, bot);
-    const session = checkIn(targetName, target, caller);
+    const { session, sessionId } = checkIn(targetName, target, caller);
     const result = await ask(session, target.chatId, {
       project,
       message,
@@ -139,7 +150,7 @@ server.registerTool(
       allowFrom: target.allowFrom,
     });
     const pending = deliver(session, target.chatId);
-    return json(pending.length ? { ...result, pending } : result);
+    return json({ ...result, ...(pending.length ? { pending } : {}), session_id: sessionId });
   },
 );
 
@@ -157,8 +168,8 @@ server.registerTool(
       `Miss ${MISSED_BEATS} intervals in a row and anything waiting is marked expired and dropped, which is how`,
       "the user learns you were not listening rather than being ignored in silence.",
       "",
-      `The result is {"messages":[...],"interval_seconds":n}. An empty array means nothing was said —`,
-      "that is the normal case, keep working and check in again next interval.",
+      `The result is {"messages":[...],"interval_seconds":n,"session_id":"..."}. An empty array means`,
+      "nothing was said — that is the normal case, keep working and check in again next interval.",
       "",
       "'project_path' and 'agent' identify you. telex records them so it can warn the user when two",
       "projects end up sharing one bot, which silently costs them half their messages.",
@@ -172,8 +183,8 @@ server.registerTool(
   },
   async ({ bot, ...caller }) => {
     const { name: targetName, bot: target } = pickBot(config, bot);
-    const messages = heartbeat(checkIn(targetName, target, caller), target.chatId);
-    return json({ messages, interval_seconds: caller.interval_seconds });
+    const { session, sessionId } = checkIn(targetName, target, caller);
+    return json({ messages: heartbeat(session, target.chatId), interval_seconds: caller.interval_seconds, session_id: sessionId });
   },
 );
 
@@ -183,8 +194,8 @@ watch(pickBot(config).bot);
 const transport = new StdioServerTransport();
 // Polling now outlives any single request, so the process has to be told when the agent is gone.
 transport.onclose = () => {
-  release();
+  release(processSession);
   process.exit(0);
 };
-process.on("exit", () => release());
+process.on("exit", () => release(processSession));
 await server.connect(transport);

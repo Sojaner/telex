@@ -293,6 +293,7 @@ The server exposes two tools. `send_to_user` starts the conversation:
 | `project_path` | string, required | Absolute path of the project the agent is working in. |
 | `agent` | string, required | The agent's own name, e.g. `claude-code`. |
 | `interval_seconds` | number, default 60 | How often the agent calls `heartbeat`. |
+| `session_id` | string, optional | The `session_id` from the agent's previous telex result. |
 
 `options` and `expect_text` are mutually exclusive. With neither, the message is a one-way
 notification and the call returns immediately.
@@ -329,10 +330,10 @@ edits a single receipt under your message as it moves:
 
 | What you see | What it means |
 |---|---|
-| 📥 *Held for the agent's next check-in.* | telex has your message and is holding it. |
-| ⛔ *Not accepted — no agent has checked in for this project yet.* | The server is running but no agent has identified itself. Nothing is holding your message. |
+| 🕦 *Held for the agent's next check-in.* | telex has your message and is holding it. |
+| ‼️ *Not accepted — no agent has checked in for this project yet.* | The server is running but no agent has identified itself. Nothing is holding your message. |
 | 📬 *Delivered to the agent.* | A heartbeat collected it; the agent has it now. |
-| ⌛ *Expired — the agent never picked this up.* | Three intervals passed with no check-in. Dropped. |
+| 🗑️ *Expired — the agent never picked this up.* | Three intervals passed with no check-in. Dropped. |
 | *nothing at all* | Nothing is running for that project. The message went nowhere. |
 
 Silence is the signal: telex only polls while its process is alive, so a message with no receipt
@@ -349,6 +350,7 @@ call returns immediately — it never blocks and never waits for you.
 | `interval_seconds` | number, default 60 | How often the agent intends to check in, 10s to 1h. |
 | `project_path` | string, required | Absolute path of the project. |
 | `agent` | string, required | The agent's own name. |
+| `session_id` | string, optional | The `session_id` from the previous result. |
 | `bot` | string, optional | Which configured bot to listen on. |
 
 ```json
@@ -362,13 +364,18 @@ forever.
 
 ### Who is calling
 
-Every tool call carries `project_path`, `agent` and `interval_seconds`. That does three things:
+Every tool call carries `project_path`, `agent` and `interval_seconds`, and every result hands back
+a `session_id` for the agent to echo on its next call. That does four things:
 
 - **The expiry clock starts at the first call**, not the first heartbeat. A message you send a
   second later already has a deadline.
 - **Messages sent before any agent has checked in are refused**, not held. The server starts with
   your agent, but until the agent actually calls a telex tool nothing owns the bot — telex says so
   rather than quietly stockpiling messages for an agent that may never ask.
+- **One session stays one agent.** The `session_id` is what telex matches on, not the name or the
+  process. A session that renames itself mid-run — a subagent taking over a heartbeat, a handoff
+  between models — is still the same agent, not a second one competing for the bot. An agent that
+  never echoes it still gets one stable identity for the life of the server process.
 - **Two projects on one bot get caught.** Each running agent records itself in
   `~/.local/state/telex/sessions.json` (override with `TELEX_STATE`), so separate telex processes
   can see each other. When a second one appears on the same bot you get:
@@ -380,6 +387,12 @@ Every tool call carries `project_path`, `agent` and `interval_seconds`. That doe
 
   That is not a cosmetic warning. Telegram hands each update to exactly one poller, so a shared
   bot loses roughly half of everything you send. Give each project its own bot.
+
+Worktrees are exempt. Agents in `~/code/acme` and `~/code/acme.worktrees/fix` resolve to the same
+repository, so they count as one project and no warning fires — they are branches of one piece of
+work, and you asked for them to share a bot by pointing them at one. The cost is real though:
+Telegram still gives each message to one poller only, so two worktrees on one bot will each see
+about half of what you send. Give a long-running worktree its own bot if that matters.
 
 A record is live while its process exists and it has checked in within three intervals; crashed
 and stale ones are pruned on the next call, so the warning doesn't fire for agents that are gone.
