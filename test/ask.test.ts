@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { BotSession, type Update } from "../src/telegram.ts";
+import { BotSession, TelegramError, toTelegramHtml, type Update } from "../src/telegram.ts";
 import { ask, chunk, compose, receipt, refuse, heartbeat, markExpired } from "../src/ask.ts";
 
 /** Fake Bot API: records calls, answers getUpdates with nothing so we can inject updates by hand. */
@@ -256,4 +256,48 @@ test("a message sent before any agent checks in is refused, not held", async (t)
   session.dispatch({ ...userSaid("now?"), update_id: 2, message: { message_id: 6, chat: { id: 7 }, from: { id: 42 }, text: "now?" } });
   await tick();
   assert.deepEqual(session.take(7).map((m) => m.text), ["now?"]);
+});
+
+test("tags Telegram does not know are translated or escaped, never left to break the message", async () => {
+  const { session, calls } = fakeSession();
+  await ask(session, 7, {
+    project: "Lexi",
+    message: "<b>Completed</b> — five fixed.<br/><br/>Build <code>20260917</code>.<div>note</div>",
+    timeoutSeconds: 5,
+  });
+
+  const sent = calls[0].params;
+  assert.equal(sent.parse_mode, "HTML", "a stray <br> must not cost the whole message its formatting");
+  assert.match(sent.text, /five fixed\.\n\nBuild/, "<br/> becomes a line break");
+  assert.doesNotMatch(sent.text, /<br|<div>/, "unsupported tags never reach Telegram");
+  assert.match(sent.text, /<b>Completed<\/b>/, "supported tags are untouched");
+  assert.match(sent.text, /\bnote$/, "layout tags go, their content stays");
+  assert.match(toTelegramHtml("<marquee>hi</marquee>"), /&lt;marquee&gt;hi&lt;\/marquee&gt;/, "anything else is shown as text");
+});
+
+test("toTelegramHtml keeps links and collapses the gaps it opens", () => {
+  assert.equal(toTelegramHtml("<p>one</p><p>two</p>"), "one\ntwo");
+  assert.equal(toTelegramHtml('<a href="https://x.test">x</a>'), '<a href="https://x.test">x</a>');
+  assert.equal(toTelegramHtml("<ul><li>a</li><li>b</li></ul>"), "• a\n• b");
+});
+
+test("a message Telegram still refuses arrives as readable text, not raw markup", async () => {
+  const calls: { method: string; params: any }[] = [];
+  let rejectedOnce = false;
+  const session = new BotSession(async (method, params) => {
+    if (method === "getUpdates") return await new Promise((r) => setTimeout(() => r([]), 10));
+    calls.push({ method, params });
+    if (method === "sendMessage" && params.parse_mode && !rejectedOnce) {
+      rejectedOnce = true;
+      throw new TelegramError("sendMessage", "Bad Request: can't parse entities: unclosed start tag");
+    }
+    return { message_id: 101 };
+  }, 0);
+
+  await ask(session, 7, { project: "P", message: "<b>unclosed and <i>tangled</b>", timeoutSeconds: 5 });
+
+  const retry = calls[1].params;
+  assert.equal(retry.parse_mode, undefined);
+  assert.equal(retry.text.includes("<"), false, "the retry shows words, not tags");
+  assert.match(retry.text, /unclosed and tangled/);
 });

@@ -54,6 +54,44 @@ export function apiFor(token: string): Fetcher {
 /** Telegram's HTML subset only needs these three escaped in text nodes. */
 export const escapeHtml = (s: string) => s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
 
+/** Everything Telegram's HTML parser accepts. Anything else is text, however much it looks like markup. */
+const ALLOWED_TAGS = new Set([
+  "b", "strong", "i", "em", "u", "ins", "s", "strike", "del",
+  "a", "code", "pre", "span", "tg-spoiler", "tg-emoji", "blockquote",
+]);
+
+/** Layout tags carry no meaning Telegram can show, but their line breaks do. */
+const BLOCK_TAGS =
+  /^(?:p|div|ul|ol|table|tbody|thead|tfoot|tr|td|th|h[1-6]|section|article|header|footer|main|nav|figure|figcaption)$/i;
+
+/**
+ * Agents write HTML, not Telegram's subset of it. A single <br> used to fail the whole message and
+ * drop it to plain text, which then showed every other tag raw — so translate what has an
+ * equivalent, drop the layout tags, and escape the rest rather than letting it poison the parse.
+ */
+export function toTelegramHtml(text: string): string {
+  return text
+    .replace(/<br\s*\/?>/gi, "\n")
+    .replace(/<li[^>]*>/gi, "• ")
+    .replace(/<\/li>/gi, "\n")
+    .replace(/<(\/?)([a-z0-9-]+)[^>]*>/gi, (tag, closing: string, name: string) => {
+      if (ALLOWED_TAGS.has(name.toLowerCase())) return tag;
+      if (BLOCK_TAGS.test(name)) return closing ? "\n" : "";
+      return escapeHtml(tag);
+    })
+    .replace(/\n{3,}/g, "\n\n")
+    .replace(/\s+$/, "");
+}
+
+/** Last resort when even the sanitised HTML will not parse: readable text beats visible markup. */
+export const stripHtml = (text: string) =>
+  text
+    .replace(/<[^>]+>/g, "")
+    .replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">")
+    .replace(/&quot;/g, '"')
+    .replace(/&amp;/g, "&");
+
 /** Telegram counts message length in UTF-16 code units, which is what JS strings already are. */
 export const MAX_MESSAGE_LEN = 4000;
 

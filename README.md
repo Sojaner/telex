@@ -299,9 +299,14 @@ The server exposes two tools. `send_to_user` starts the conversation:
 notification and the call returns immediately.
 
 **Formatting.** `message` is rendered with Telegram's HTML subset: `<b> <i> <u> <s> <code> <pre>
-<a href=""> <blockquote>`. Literal `&`, `<` and `>` must be escaped as `&amp; &lt; &gt;`.
-Markdown is not rendered. A message with broken tags is re-sent as plain text rather than failing
-the call.
+<a href=""> <blockquote>`. Literal `&`, `<` and `>` must be escaped as `&amp; &lt; &gt;`. Markdown
+is not rendered.
+
+Agents write ordinary HTML anyway, so telex translates before sending: `<br>` and `</p>` become
+newlines, `<li>` becomes a bullet, layout tags like `<p>` and `<div>` are dropped, and anything
+else Telegram doesn't know is escaped so it shows as text instead of breaking the parse. Only if
+the result still won't parse is the message re-sent as plain text, with the tags stripped rather
+than left visible.
 
 **Results.**
 
